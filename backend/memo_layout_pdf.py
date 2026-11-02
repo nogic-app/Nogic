@@ -11,6 +11,11 @@ from xml.sax.saxutils import escape
 
 import arabic_reshaper
 from bidi.algorithm import get_display
+from markdown_clean import clean_markdown
+from memo_content import chat_message_items, file_items
+from memo_export_assets import app_icon_path, user_initials
+from memo_pdf_components import NumberedCanvas, draw_footer, message_table
+from memo_pdf_sections import append_memo_sections, append_sources
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -26,12 +31,6 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-
-from markdown_clean import clean_markdown
-from memo_content import chat_message_items, file_items
-from memo_export_assets import app_icon_path, user_initials
-from memo_pdf_components import NumberedCanvas, draw_footer, message_table
-from memo_pdf_sections import append_memo_sections, append_sources
 
 INK = colors.HexColor("#1F1F1D")
 BODY = colors.HexColor("#2B2B28")
@@ -118,6 +117,16 @@ def _pdf_styles() -> dict[str, ParagraphStyle]:
             "SourceDetail", 9.5, 13, BODY, space_after=12, left_indent=12
         ),
         "empty": _pdf_style("MemoEmpty", 9.5, 13, SECONDARY, space_after=1),
+        "caption": ParagraphStyle(
+            "MapCaption",
+            parent=getSampleStyleSheet()["Normal"],
+            fontName="Helvetica-Oblique",
+            fontSize=10,
+            leading=12,
+            textColor=SECONDARY,
+            alignment=TA_LEFT,
+            spaceAfter=1,
+        ),
         "table": _pdf_style("PlantTable", 8, 10, BODY),
         "table_header": _pdf_style("PlantTableHeader", 8, 10, ACCENT),
     }
@@ -229,6 +238,7 @@ def render_pdf(
     path: str,
     model_name: str,
     user_name: str = "",
+    map_image_path: str | None = None,
 ) -> None:
     """Render the chat and its memo references to a paginated PDF."""
     current_date = date.today().strftime("%B %d, %Y").replace(" 0", " ")
@@ -250,7 +260,13 @@ def render_pdf(
     _append_conversation(story, messages, styles, user_name, app_icon_path())
     _append_files(story, messages, styles)
     append_memo_sections(
-        story, messages, styles, _paragraph, clean_markdown, fix_arabic
+        story,
+        messages,
+        styles,
+        _paragraph,
+        clean_markdown,
+        fix_arabic,
+        map_image_path,
     )
     append_sources(story, messages, styles, _paragraph)
     on_page = draw_footer(current_date)

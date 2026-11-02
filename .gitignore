@@ -53,11 +53,14 @@ archive/
 # Keep the verified plant table in version control.
 !backend/data/plants.json
 
+# Internal Task Files
+TASKS.md
+TASKS_V1.*.md
+TASKS_V2.*.md
+
 # Internal development files (not for public repo)
 .rules
 STATE.md
-TASKS.md
-TASKS_V1.1.md
 DECISIONS.md
 PROJECT.md
 DESIGN.md

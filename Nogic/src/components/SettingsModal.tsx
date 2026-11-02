@@ -32,6 +32,7 @@ interface SettingsModalProps {
   onClose: () => void;
   /** Tab shown when the modal opens. */
   initialTab?: SettingsTab;
+  onOpenChangelog?: () => void;
 }
 
 /**
@@ -43,6 +44,7 @@ export function SettingsModal({
   open,
   onClose,
   initialTab = "general",
+  onOpenChangelog,
 }: SettingsModalProps) {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
@@ -128,7 +130,7 @@ export function SettingsModal({
               {activeTab === "usage" ? <SettingsUsage /> : null}
               {activeTab === "memory" ? <SettingsMemory /> : null}
               {activeTab === "advanced" ? <SettingsAdvanced /> : null}
-              {activeTab === "about" ? <SettingsAbout /> : null}
+              {activeTab === "about" ? <SettingsAbout onOpenChangelog={onOpenChangelog} /> : null}
             </ErrorBoundary>
           </div>
         </div>

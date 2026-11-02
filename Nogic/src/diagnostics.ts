@@ -14,7 +14,7 @@ export async function collectDiagnostics(): Promise<string> {
     invoke<HardwareInfo>("get_hardware_info"),
   ]);
 
-  return requestSidecar(
+  const rawDiagnostics = await requestSidecar(
     "get_diagnostics",
     {
       app_version: version,
@@ -26,4 +26,32 @@ export async function collectDiagnostics(): Promise<string> {
     (value): value is string => typeof value === "string",
     15000,
   );
+
+  const diagnostics: Record<string, string | string[]> = {};
+  const logLines: string[] = [];
+  let inLogSection = false;
+  for (const line of rawDiagnostics.split("\n")) {
+    if (line.startsWith("Sidecar log (last ")) {
+      inLogSection = true;
+      continue;
+    }
+    if (inLogSection) {
+      logLines.push(line);
+      continue;
+    }
+    const separator = line.indexOf(": ");
+    if (separator > 0) {
+      diagnostics[line.slice(0, separator).toLowerCase().replaceAll(" ", "_")] =
+        line.slice(separator + 2);
+    }
+  }
+  if (logLines.length > 0) diagnostics.sidecar_log = logLines;
+
+  return [
+    "## Diagnostic snapshot",
+    "",
+    "```json",
+    JSON.stringify(diagnostics, null, 2),
+    "```",
+  ].join("\n");
 }

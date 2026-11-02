@@ -42,7 +42,11 @@ def build_law_system_prompt(law_sources: list[dict[str, Any]]) -> str:
         "from memory. If the user asks about a specific topic (like solar panels) "
         "and that exact topic is NOT mentioned in the provided legal articles, you "
         "MUST respond with: 'I couldn't find an article that answers this.' Do not "
-        "attempt to apply general rules to missing topics."
+        "attempt to apply general rules to missing topics. If the user asks a "
+        "complex question with multiple parts, answer the legal parts using the "
+        "provided articles, and explicitly state that you cannot answer the "
+        "non-legal parts. Do NOT refuse the entire question just because one part "
+        "is missing from the legal text."
     )
     if law_sources:
         return (

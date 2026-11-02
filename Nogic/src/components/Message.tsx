@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 import type { ChatModes } from "@/chatModes.ts";
 import { StreamingTicker } from "./StreamingTicker.tsx";
 
@@ -6,7 +7,7 @@ export function UserMessage({ children }: { children: ReactNode }) {
   // A div rather than a p: Markdown renders block elements (paragraphs, lists)
   // and nesting those inside a paragraph is invalid HTML.
   return (
-    <div className="ml-auto w-fit max-w-[80%] rounded-2xl bg-[var(--accent-subtle)] px-4 py-3 text-body font-medium text-[var(--text-primary)]">
+    <div className="user-message ml-auto w-fit max-w-[80%] rounded-2xl bg-[var(--accent-subtle)] px-4 py-3 text-body font-medium text-[var(--text-primary)]">
       {children}
     </div>
   );
@@ -55,6 +56,7 @@ interface AssistantMessageProps {
   showThinking?: boolean;
   modes: ChatModes;
   isExtractive?: boolean;
+  rawContent?: string;
 }
 
 export function AssistantMessage({
@@ -66,20 +68,37 @@ export function AssistantMessage({
   showThinking = false,
   modes,
   isExtractive = false,
+  rawContent = "",
 }: AssistantMessageProps) {
   const [hasStreamed, setHasStreamed] = useState(isStreaming);
+  const [isCopied, setIsCopied] = useState(false);
   const hasContent = children !== "" && children !== null && children !== undefined;
   const hasThinking = thinkingText.trim().length > 0;
   useEffect(() => {
     if (isStreaming) setHasStreamed(true);
   }, [isStreaming]);
 
+  useEffect(() => {
+    if (!isCopied) return;
+    const timeout = window.setTimeout(() => setIsCopied(false), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [isCopied]);
+
+  async function copyMessage() {
+    try {
+      await navigator.clipboard.writeText(rawContent);
+      setIsCopied(true);
+    } catch (error) {
+      console.error("Could not copy the assistant message to the clipboard.", error);
+    }
+  }
+
   // Think mode opens the panel before text arrives; after that its content
   // alone keeps it visible, so reasoning survives the end of streaming.
   const showPanel = hasThinking || (isStreaming && showThinking);
 
   return (
-    <div className="text-body text-primary">
+    <div className="pb-4 text-body text-primary">
       {hasStreamed && (
         <div className="h-[30px]">
           {isStreaming && (
@@ -116,6 +135,22 @@ export function AssistantMessage({
 
       {hasContent && (
         <div className={showPanel ? "mt-2 mb-4" : "mb-4"}>{children}</div>
+      )}
+      {!isStreaming && rawContent.length > 0 && (
+        <button
+          type="button"
+          aria-label={isCopied ? "Copied" : "Copy message"}
+          title={isCopied ? "Copied" : "Copy message"}
+          onClick={() => void copyMessage()}
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-meta text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-muted)] hover:text-[var(--text-primary)]"
+        >
+          {isCopied ? (
+            <Check size={13} aria-hidden="true" />
+          ) : (
+            <Copy size={13} aria-hidden="true" />
+          )}
+          {isCopied ? "Copied" : "Copy"}
+        </button>
       )}
     </div>
   );

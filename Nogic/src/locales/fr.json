@@ -49,6 +49,8 @@
     "keyboardShortcuts": "Raccourcis clavier",
     "enableShortcuts": "Activer les raccourcis clavier",
     "newChat": "Nouvelle discussion",
+    "newProject": "Nouveau projet",
+    "search": "Rechercher",
     "focusComposer": "Accéder à la saisie",
     "openSettings": "Ouvrir les paramètres",
     "startup": "Démarrage",

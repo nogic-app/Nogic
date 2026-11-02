@@ -12,6 +12,7 @@ import {
   FileText,
   FileType,
   Globe,
+  Image,
   Layers,
   Paperclip,
   Square,
@@ -34,6 +35,7 @@ interface ComposerProps {
   onStop: () => void;
   /** Retained for the workspace capability contract; images are not a composer skill. */
   supportsVision: boolean;
+  modelCapabilities: string[] | null;
   /** False when the active Ollama model reports no thinking capability. */
   supportsThinking: boolean;
   /** Inline notice below the composer (e.g. Ollama offline). */
@@ -59,6 +61,8 @@ export function Composer({
   isStreaming,
   onSend,
   onStop,
+  supportsVision,
+  modelCapabilities,
   supportsThinking,
   notice,
 }: ComposerProps) {
@@ -72,6 +76,8 @@ export function Composer({
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [attachedSkill, setAttachedSkill] = useState<SkillTag | null>(null);
+
+  console.log("Model Capabilities:", modelCapabilities);
 
   // Close the skills menu on outside click or Escape.
   useEffect(() => {
@@ -237,6 +243,17 @@ export function Composer({
                     <Paperclip size={14} aria-hidden="true" />
                     Add File
                   </button>
+                  {supportsVision && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-sec hover:bg-[var(--bg-muted)] hover:text-primary"
+                      onClick={() => void attachFile(true)}
+                    >
+                      <Image size={14} aria-hidden="true" />
+                      Add Image
+                    </button>
+                  )}
                   <div role="separator" className="my-1 border-t border-border" />
                   <p className="px-2 pb-1 pt-1 text-meta uppercase tracking-wide text-tertiary">
                     Skills

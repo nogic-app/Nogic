@@ -17,6 +17,7 @@ import { DEFAULT_CHAT_MODES, type ChatModes } from "@/chatModes.ts";
 import { resolveActiveModel } from "@/activeModel.ts";
 import { useSettings } from "@/contexts/SettingsContext.tsx";
 import { SettingsModal } from "@/components/SettingsModal.tsx";
+import { ChangelogModal, CURRENT_APP_VERSION } from "@/components/ChangelogModal.tsx";
 import type { SettingsTab } from "@/components/SettingsModal.tsx";
 import {
   OnboardingWizard,
@@ -38,6 +39,8 @@ import {
   normalizeErrorPayload,
   type ErrorPayload,
 } from "@/types/errors.ts";
+import { requestSidecar } from "@/sidecarRequest.ts";
+import type { TokenUsage } from "@/types/tokenUsage.ts";
 
 /**
  * `/plant "name"` and `/plant name` both resolve to the bare name.
@@ -59,7 +62,17 @@ function parsePlantCommand(content: string): string | null {
 
 export default function Workspace() {
   const { t } = useTranslation();
-  const { activeModel, setActiveModel } = useSettings();
+  const {
+    activeModel,
+    setActiveModel,
+    seen_version,
+    setSeenVersion,
+    settingsLoaded,
+    temperature,
+    contextWindow,
+    modelKeepAlive,
+    persona,
+  } = useSettings();
   const startupHealth = useStartupHealthCheck();
   const { info: hardwareInfo } = useHardwareInfo();
   const isExtractive = isExtractiveHardware(hardwareInfo);
@@ -77,17 +90,33 @@ export default function Workspace() {
   const [activeChat, setActiveChat] = useState<ChatItem | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isChatSearchOpen, setIsChatSearchOpen] = useState(false);
+  const [chatSearch, setChatSearch] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isChangelogOpen, setIsChangelogOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   // null until the sidecar answers; the wizard only renders for a confirmed
   // fresh install so an existing user never sees it flash.
   const [isOnboarded, setIsOnboarded] = useState<boolean | null>(null);
   const [sidebarRefreshToken, setSidebarRefreshToken] = useState(0);
+  const [lastTokenUsage, setLastTokenUsage] = useState<TokenUsage | null>(null);
+
+  useEffect(() => {
+    if (settingsLoaded && seen_version !== CURRENT_APP_VERSION) {
+      setIsChangelogOpen(true);
+    }
+  }, [seen_version, settingsLoaded]);
+
+  const closeChangelog = useCallback(() => {
+    setSeenVersion(CURRENT_APP_VERSION);
+    setIsChangelogOpen(false);
+  }, [setSeenVersion]);
   const activeRequestId = useRef<string | null>(null);
   const historyRequestId = useRef<string | null>(null);
   const plantLookupRequestId = useRef<string | null>(null);
   const remappedChatId = useRef<string | null>(null);
   const activeChatId = useRef<string | null>(null);
+  const contextStartIndex = useRef(0);
   const skipHistoryFetch = useRef(false);
   const chatCache = useRef<Record<string, ChatMessage[]>>({});
   const skipCacheWrite = useRef(false);
@@ -117,7 +146,13 @@ export default function Workspace() {
       activeChatId,
       chatCache,
     },
-    { setMessages, setIsStreaming, setActiveChat, setErrorPayload },
+    {
+      setMessages,
+      setIsStreaming,
+      setActiveChat,
+      setErrorPayload,
+      setLastTokenUsage,
+    },
   );
 
   // Settings -> Memory deletes chats inside the sidecar. Reset the visible
@@ -125,6 +160,7 @@ export default function Workspace() {
   // immediately instead of only after the next interaction.
   const handleMemoryDeleted = useCallback(() => {
     activeChatId.current = null;
+    contextStartIndex.current = 0;
     activeRequestId.current = null;
     historyRequestId.current = null;
     plantLookupRequestId.current = null;
@@ -214,6 +250,7 @@ export default function Workspace() {
 
   const handleSelectChat = useCallback((chat: ChatItem) => {
     setErrorPayload(null);
+    contextStartIndex.current = 0;
     const currentChatId = activeChatId.current;
     if (currentChatId && !currentChatId.startsWith("temp_")) {
       chatCache.current[currentChatId] = messages;
@@ -234,6 +271,7 @@ export default function Workspace() {
   const handleChatDeleted = useCallback((chatId: string) => {
     delete chatCache.current[chatId];
     if (activeChatId.current !== chatId) return;
+    contextStartIndex.current = 0;
     activeChatId.current = null;
     activeRequestId.current = null;
     historyRequestId.current = null;
@@ -250,6 +288,7 @@ export default function Workspace() {
     historyRequestId.current = null;
     plantLookupRequestId.current = null;
     remappedChatId.current = null;
+    contextStartIndex.current = 0;
     skipHistoryFetch.current = false;
     chatCache.current = {};
     setActiveProjectId(null);
@@ -265,6 +304,7 @@ export default function Workspace() {
     setActiveProjectId(selectedProjectId);
     activeChatId.current = null;
     activeRequestId.current = null;
+    contextStartIndex.current = 0;
     historyRequestId.current = null;
     plantLookupRequestId.current = null;
     setActiveChat(null);
@@ -276,6 +316,7 @@ export default function Workspace() {
   const handleProjectCreated = useCallback((projectId: string) => {
     setActiveProjectId(projectId);
     activeChatId.current = null;
+    contextStartIndex.current = 0;
     setActiveChat(null);
     setMessages([]);
     setInput("");
@@ -468,7 +509,7 @@ export default function Workspace() {
 
     const userMessage: ChatMessage = { role: "user", content, attachments, skill: skill ?? undefined };
     const isSlashCommand = /^\/(?:site|help|plant)(?:\s|$)/.test(content);
-    const conversation = [...messages, userMessage];
+    const conversation = [...messages.slice(contextStartIndex.current), userMessage];
     const requestId = `chat:${crypto.randomUUID()}`;
     activeRequestId.current = requestId;
     setActiveModes(modes);
@@ -504,6 +545,10 @@ export default function Workspace() {
           skill,
           modes,
           hardware: hardwareInfo,
+          temperature,
+          num_ctx: contextWindow,
+          keep_alive: modelKeepAlive,
+          persona,
         }),
       });
     } catch (error) {
@@ -534,6 +579,17 @@ export default function Workspace() {
     });
   };
 
+  const handleClearContext = async () => {
+    const chatId = activeChatId.current;
+    if (!chatId) throw new Error("Start a chat before clearing its context.");
+    await requestSidecar<boolean>(
+      "clear_context",
+      { chat_id: chatId },
+      (value): value is boolean => value === true,
+    );
+    contextStartIndex.current = messages.length;
+  };
+
   // A failed boot ping replaces the whole workspace: the sidecar is the app.
   if (startupHealth === "failed") return <StartupError />;
 
@@ -550,6 +606,7 @@ export default function Workspace() {
     <>
       <WorkspaceView
         chatTitle={activeChat?.title ?? "New Chat"}
+        onClearContext={handleClearContext}
         input={input}
         onInputChange={setInput}
         isStreaming={isStreaming}
@@ -563,15 +620,44 @@ export default function Workspace() {
         onProjectCreated={handleProjectCreated}
         isSidebarOpen={isSidebarOpen}
         onToggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)}
+        isChatSearchOpen={isChatSearchOpen}
+        chatSearch={chatSearch}
+        onCloseChatSearch={() => {
+          setIsChatSearchOpen(false);
+          setChatSearch("");
+        }}
+        onChatSearchChange={setChatSearch}
         sidebarRefreshToken={sidebarRefreshToken}
         onOpenSettings={() => {
           setSettingsTab("general");
           setIsSettingsOpen(true);
         }}
+        onCreateChatShortcut={() => handleCreateChat(null)}
+        onCreateProjectShortcut={() => {
+          document.getElementById("new-project-button")?.click();
+        }}
+        onToggleSearchShortcut={() => {
+          if (!isSidebarOpen) {
+            setIsSidebarOpen(true);
+            setIsChatSearchOpen(true);
+            return;
+          }
+          setIsChatSearchOpen((isOpen) => {
+            if (isOpen) setChatSearch("");
+            return !isOpen;
+          });
+        }}
+        onEscapeShortcut={() => {
+          setIsChatSearchOpen(false);
+          setChatSearch("");
+          setIsSettingsOpen(false);
+          setIsChangelogOpen(false);
+        }}
         onOpenUsage={() => {
           setSettingsTab("usage");
           setIsSettingsOpen(true);
         }}
+        lastTokenUsage={lastTokenUsage}
         errorPayload={errorPayload}
         onRetryError={() => {
           const previous = retryRequest.current;
@@ -585,6 +671,7 @@ export default function Workspace() {
           }
         }}
         supportsVision={supportsVision}
+        modelCapabilities={modelCapabilities}
         supportsThinking={supportsThinking}
         isWelcome={messages.length === 0 && !isStreaming}
         welcome={<WelcomeScreen onPromptSelect={setInput} t={t} />}
@@ -606,7 +693,9 @@ export default function Workspace() {
         open={isSettingsOpen}
         initialTab={settingsTab}
         onClose={() => setIsSettingsOpen(false)}
+        onOpenChangelog={() => setIsChangelogOpen(true)}
       />
+      <ChangelogModal open={isChangelogOpen} onClose={closeChangelog} />
     </>
   );
 }

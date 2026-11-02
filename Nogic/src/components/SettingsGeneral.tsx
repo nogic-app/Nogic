@@ -21,6 +21,8 @@ const LANGUAGES = [
 
 const SHORTCUTS = [
   { key: "newChat", keys: ["Ctrl", "N"] },
+  { key: "newProject", keys: ["Ctrl", "Shift", "N"] },
+  { key: "search", keys: ["Ctrl", "K"] },
   { key: "focusComposer", keys: ["Ctrl", "L"] },
   { key: "openSettings", keys: ["Ctrl", ","] },
 ] as const;
@@ -68,6 +70,8 @@ export function SettingsGeneral() {
     setUserName,
     enableShortcuts,
     setEnableShortcuts,
+    persona,
+    setPersona,
   } = useSettings();
   const { t } = useTranslation();
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
@@ -143,6 +147,26 @@ export function SettingsGeneral() {
             className="mt-2 block w-full rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-sec text-[var(--text-primary)] outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-[var(--focus)]"
           />
         </div>
+      </Section>
+
+      <Section title="AI Persona">
+        <label
+          htmlFor="settings-persona"
+          className="sr-only"
+        >
+          AI Persona
+        </label>
+        <textarea
+          id="settings-persona"
+          rows={3}
+          value={persona}
+          onChange={(event) => setPersona(event.target.value)}
+          placeholder="e.g. You are a strict academic tutor. Always answer in French."
+          className="mt-2 block w-full resize-y rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-sec text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--border-strong)] focus:ring-2 focus:ring-[var(--focus)]"
+        />
+        <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
+          Customize how the AI speaks to you. Leave blank for the default Nogic landscape architect persona.
+        </p>
       </Section>
 
       <Section title={t("settings.language")} description={t("settings.chooseLanguage", "Choose the language for the interface.")}>

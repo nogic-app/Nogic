@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listenSidecar as listen } from "@/sidecarEvents.ts";
 import { PanelLeftClose, PanelLeftOpen, Plus, Settings } from "lucide-react";
@@ -22,6 +22,12 @@ interface SidebarProps {
   isOpen: boolean;
   onToggle: () => void;
   onOpenSettings: () => void;
+  searchInputRef: RefObject<HTMLInputElement | null>;
+  isChatSearchOpen: boolean;
+  chatSearch: string;
+  onToggleChatSearch: () => void;
+  onCloseChatSearch: () => void;
+  onChatSearchChange: (value: string) => void;
   /** Opens Settings directly on the Usage tab. */
   onOpenUsage: () => void;
   /** Bumped by Workspace after chats are deleted outside the sidebar. */
@@ -38,6 +44,12 @@ export function Sidebar({
   isOpen,
   onToggle,
   onOpenSettings,
+  searchInputRef,
+  isChatSearchOpen,
+  chatSearch,
+  onToggleChatSearch,
+  onCloseChatSearch,
+  onChatSearchChange,
   onOpenUsage,
   refreshToken,
 }: SidebarProps) {
@@ -179,18 +191,16 @@ export function Sidebar({
             });
             return;
           }
-          if (typeof payload.id !== "string") return;
           if (payload.type === "chat_title_updated") {
             if (
-              !isRecord(payload.data) ||
-              typeof payload.data.chat_id !== "string" ||
-              typeof payload.data.new_title !== "string"
+              typeof payload.chat_id !== "string" ||
+              typeof payload.new_title !== "string"
             ) {
               console.error("Received an invalid chat title update from the Python sidecar.", payload);
               return;
             }
-            const updatedChatId = payload.data.chat_id;
-            const updatedTitle = payload.data.new_title;
+            const updatedChatId = payload.chat_id;
+            const updatedTitle = payload.new_title;
             setChats((current) =>
               current.map((chat) =>
                 chat.id === updatedChatId
@@ -208,6 +218,7 @@ export function Sidebar({
             });
             return;
           }
+          if (typeof payload.id !== "string") return;
 
           const isSidebarRequest =
             payload.id === "init_sidebar" ||
@@ -366,8 +377,8 @@ export function Sidebar({
     }
   };
 
-  const exportChatFile = (chatId: string, format: ChatExportFormat) => {
-    void exportChat(chatId, format);
+  const exportChatFile = (chatId: string, format: ChatExportFormat, title: string) => {
+    void exportChat(chatId, format, title);
   };
 
   const pinChat = async (chat: ChatItem) => {
@@ -505,6 +516,12 @@ export function Sidebar({
         onExportChat={exportChatFile}
         onCreateChat={() => onCreateChat(null)}
         onCreateProject={openCreateProject}
+        searchInputRef={searchInputRef}
+        isChatSearchOpen={isChatSearchOpen}
+        chatSearch={chatSearch}
+        onToggleChatSearch={onToggleChatSearch}
+        onCloseChatSearch={onCloseChatSearch}
+        onChatSearchChange={onChatSearchChange}
         onAddChatToProject={(project) => onCreateChat(project.id)}
         hidden={!isOpen}
       />

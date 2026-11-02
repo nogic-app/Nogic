@@ -11,7 +11,15 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Mm, Pt, RGBColor
-
+from memo_content import (
+    EMPTY_SECTION,
+    chat_message_items,
+    memo_sections,
+    plant_table_items,
+    site_context,
+    source_items,
+    split_site_notes,
+)
 from memo_docx_components import (
     add_bottom_border,
     add_conversation,
@@ -22,13 +30,6 @@ from memo_docx_components import (
     shade_cell,
 )
 from memo_export_assets import app_icon_path
-from memo_content import (
-    EMPTY_SECTION,
-    chat_message_items,
-    memo_sections,
-    plant_table_items,
-    source_items,
-)
 
 INK = RGBColor(0x1F, 0x1F, 0x1D)
 BODY = RGBColor(0x2B, 0x2B, 0x28)
@@ -136,6 +137,9 @@ def _update_fields_on_open(document: Any) -> None:
 
 
 def _add_sources(document: Any, messages: list[dict[str, Any]]) -> None:
+    sources = source_items(messages)
+    if not sources:
+        return
     document.add_page_break()
     heading = document.add_paragraph()
     heading.paragraph_format.space_after = Pt(4)
@@ -148,10 +152,6 @@ def _add_sources(document: Any, messages: list[dict[str, Any]]) -> None:
         9.5,
         SECONDARY,
     )
-    sources = source_items(messages)
-    if not sources:
-        docx_run(document.add_paragraph(), EMPTY_SECTION)
-        return
     for index, (label, details) in enumerate(sources, start=1):
         paragraph = document.add_paragraph()
         paragraph.paragraph_format.space_after = Pt(2)
@@ -165,13 +165,67 @@ def _add_sources(document: Any, messages: list[dict[str, Any]]) -> None:
         docx_run(paragraph, detail, 9.5, BODY)
 
 
-def _add_memo_sections(document: Any, messages: list[dict[str, Any]]) -> None:
+def _add_memo_sections(
+    document: Any,
+    messages: list[dict[str, Any]],
+    site_map_path: str | None = None,
+) -> None:
     for heading_text, items in memo_sections(messages):
-        heading = document.add_paragraph()
-        heading.paragraph_format.space_before = Pt(16)
-        docx_run(heading, heading_text, 12, ACCENT, True)
+        if heading_text != "Site Context":
+            heading = document.add_paragraph()
+            heading.paragraph_format.space_before = Pt(16)
+            docx_run(heading, heading_text, 12, ACCENT, True)
         if heading_text == "Plant Palette":
             _add_plant_table(document, messages)
+        elif heading_text == "Site Context" and items:
+            site = site_context(messages)
+            if not site:
+                continue
+            lead = document.add_paragraph()
+            docx_run(lead, f"Site Memo: {site['name']}", 10.5, INK, True)
+            if site_map_path:
+                document.add_picture(site_map_path, width=Inches(4))
+            if site["coords"]:
+                coordinates = document.add_paragraph()
+                docx_run(
+                    coordinates,
+                    f"Coordinates: {site['coords']}",
+                    9.5,
+                    BODY,
+                )
+                lat, lon = site["coords"].split(", ", 1)
+                link = (
+                    "https://www.openstreetmap.org/"
+                    f"?mlat={lat}&mlon={lon}#map=13/{lat}/{lon}"
+                )
+                link_paragraph = document.add_paragraph()
+                hyperlink = OxmlElement("w:hyperlink")
+                hyperlink.set(
+                    qn("r:id"),
+                    document.part.relate_to(
+                        link,
+                        "http://schemas.openxmlformats.org/"
+                        "officeDocument/2006/relationships/hyperlink",
+                        is_external=True,
+                    ),
+                )
+                run = OxmlElement("w:r")
+                text = OxmlElement("w:t")
+                text.text = "Open in OpenStreetMap"
+                run.append(text)
+                hyperlink.append(run)
+                link_paragraph._p.append(hyperlink)
+            for label, value in site["notes"].items():
+                for index, note in enumerate(split_site_notes(value)):
+                    bullet = document.add_paragraph(style="List Bullet")
+                    bullet.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    prefix = f"{label}: " if index == 0 else ""
+                    docx_run(bullet, f"{prefix}{note}", 9.5, BODY)
+            attribution = document.add_paragraph()
+            run = attribution.add_run("Map data © OpenStreetMap contributors")
+            run.italic = True
+            run.font.size = Pt(8)
+            run.font.color.rgb = SECONDARY
         elif not items:
             docx_run(document.add_paragraph(), EMPTY_SECTION)
         else:
@@ -191,6 +245,7 @@ def render_docx(
     path: str,
     model_name: str,
     user_name: str = "",
+    map_image_path: str | None = None,
 ) -> None:
     """Render the chat and its memo references to a Word document."""
     current_date = date.today().strftime("%B %d, %Y").replace(" 0", " ")
@@ -210,7 +265,7 @@ def render_docx(
     )
     add_conversation(document, messages, BODY, user_name, app_icon_path())
     add_files(document, messages, ACCENT, BODY)
-    _add_memo_sections(document, messages)
+    _add_memo_sections(document, messages, map_image_path)
     _add_sources(document, messages)
     for section in document.sections:
         _add_footer(section, current_date)

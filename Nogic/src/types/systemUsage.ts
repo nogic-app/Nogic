@@ -1,4 +1,4 @@
-/** Live machine usage returned by the Rust `get_system_usage` command. */
+/** Live Nogic + Ollama process usage returned by Rust. */
 export interface SystemUsage {
   cpu_usage: number;
   ram_used_gb: number;

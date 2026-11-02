@@ -8,17 +8,16 @@ chat. Callers that do not pass messages get this chat's persisted rows.
 
 from __future__ import annotations
 
-import os
 import logging
 import tempfile
 from typing import Any
 
-from openpyxl import Workbook
-from openpyxl.styles import Font
-
 from db import get_connection, get_messages, get_settings
 from export_paths import export_path
+from memo_content import memo_title
 from memo_layout import render_docx, render_pdf
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
 logger = logging.getLogger(__name__)
 Messages = list[dict[str, Any]]
@@ -72,24 +71,38 @@ def _memo_user_name() -> str:
     return str(settings.get("userName") or "").strip()
 
 
-def export_chat_pdf(chat_id: str, messages: Messages | None = None) -> str:
+def export_chat_pdf(
+    chat_id: str,
+    messages: Messages | None = None,
+    map_image_path: str | None = None,
+) -> str:
     """Write the chat export to a PDF in a temp directory and return its path."""
     title, _project, messages = _load_chat(chat_id, messages)
+    title = memo_title(title)
     path = _output_path(title, "pdf")
     try:
-        render_pdf(title, messages, path, _memo_model_name(), _memo_user_name())
+        render_pdf(
+            title, messages, path, _memo_model_name(), _memo_user_name(), map_image_path
+        )
     except Exception:
         logger.exception("Could not export chat as PDF.")
         raise
     return path
 
 
-def export_chat_docx(chat_id: str, messages: Messages | None = None) -> str:
+def export_chat_docx(
+    chat_id: str,
+    messages: Messages | None = None,
+    map_image_path: str | None = None,
+) -> str:
     """Write the chat export to a .docx in a temp directory and return its path."""
     title, _project, messages = _load_chat(chat_id, messages)
+    title = memo_title(title)
     path = _output_path(title, "docx")
     try:
-        render_docx(title, messages, path, _memo_model_name(), _memo_user_name())
+        render_docx(
+            title, messages, path, _memo_model_name(), _memo_user_name(), map_image_path
+        )
     except Exception:
         logger.exception("Could not export chat as Word.")
         raise

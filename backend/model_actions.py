@@ -3,6 +3,7 @@ import logging
 import re
 import subprocess
 import threading
+import urllib.request
 
 import ollama
 from errors import classify
@@ -24,11 +25,24 @@ def _emit(message: dict[str, object]) -> None:
 
 def get_ollama_status() -> dict[str, object]:
     try:
-        ollama.list()
-        return {"status": "running"}
+        request = urllib.request.Request(
+            "http://127.0.0.1:11434/api/tags",
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=1) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode())
+                return {
+                    "status": "running",
+                    "models": [
+                        model["name"]
+                        for model in data.get("models", [])
+                        if isinstance(model, dict) and isinstance(model.get("name"), str)
+                    ],
+                }
     except Exception:
-        logger.exception("Failed to fetch Ollama status.")
-        raise
+        pass
+    return {"status": "offline", "models": []}
 
 
 def get_installed_models() -> list[str]:
@@ -37,6 +51,28 @@ def get_installed_models() -> list[str]:
     except Exception:
         logger.exception("Failed to fetch installed Ollama models.")
         raise
+
+
+def delete_model(model_name: object) -> dict[str, bool]:
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("A model name is required to delete a model.")
+    try:
+        ollama.delete(model_name.strip())
+        return {"success": True}
+    except Exception:
+        logger.exception("Failed to delete Ollama model %s.", model_name)
+        raise
+
+
+def unload_model(model_name: object) -> dict[str, object]:
+    if not isinstance(model_name, str) or not model_name.strip():
+        return {"success": False, "error": "A model name is required to unload a model."}
+    try:
+        ollama.generate(model=model_name.strip(), prompt="", keep_alive=0)
+        return {"success": True}
+    except Exception as error:
+        logger.exception("Failed to unload Ollama model %s.", model_name)
+        return {"success": False, "error": str(error)}
 
 
 def get_loaded_models() -> list[str]:
@@ -52,6 +88,28 @@ def get_loaded_models() -> list[str]:
         if isinstance(name, str) and name.strip():
             loaded.append(name.strip())
     return loaded
+
+
+def get_app_usage() -> dict[str, object]:
+    """Return the loaded Ollama model and its measured VRAM footprint."""
+    try:
+        response = ollama.ps()
+    except Exception:
+        logger.exception("Failed to fetch Ollama model usage.")
+        raise
+    entries = getattr(response, "models", None) or []
+    for entry in entries:
+        model_name = getattr(entry, "model", None) or getattr(entry, "name", None)
+        size_vram = getattr(entry, "size_vram", None)
+        if not isinstance(model_name, str) or not isinstance(size_vram, int):
+            continue
+        size_gb = size_vram / (1024**3)
+        return {
+            "model_vram": f"{size_gb:.1f} GB",
+            "model_vram_gb": size_gb,
+            "model_name": model_name,
+        }
+    return {"model_vram": None, "model_vram_gb": None, "model_name": None}
 
 
 def get_model_capabilities(model_name: object) -> list[str]:
@@ -189,8 +247,14 @@ def handle_model_action(action: str, request: dict[str, object]) -> None:
         data = get_ollama_status()
     elif action == "get_installed_models":
         data = get_installed_models()
+    elif action == "delete_model":
+        data = delete_model(request.get("model_name"))
+    elif action == "unload_model":
+        data = unload_model(request.get("model_name"))
     elif action == "get_loaded_models":
         data = get_loaded_models()
+    elif action == "get_app_usage":
+        data = get_app_usage()
     elif action == "get_model_capabilities":
         data = get_model_capabilities(request.get("model_name"))
     elif action == "pull_model":

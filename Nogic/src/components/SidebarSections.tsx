@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -25,6 +25,7 @@ interface SidebarSectionsProps {
   onSelectChat: (chat: ChatItem) => void;
   onCreateChat: () => void;
   onCreateProject: () => void;
+  searchInputRef: RefObject<HTMLInputElement | null>;
   onAddChatToProject: (project: ProjectItem) => void;
   onDeleteChat: (chatId: string) => void;
   onPinChat: (chat: ChatItem) => void;
@@ -32,7 +33,12 @@ interface SidebarSectionsProps {
   onDeleteProject: (project: ProjectItem) => void;
   onRenameChat: (chatId: string, newTitle: string) => void;
   onRenameProject: (projectId: string, newName: string) => void;
-  onExportChat: (chatId: string, format: ChatExportFormat) => void;
+  onExportChat: (chatId: string, format: ChatExportFormat, title: string) => void;
+  isChatSearchOpen: boolean;
+  chatSearch: string;
+  onToggleChatSearch: () => void;
+  onCloseChatSearch: () => void;
+  onChatSearchChange: (value: string) => void;
   hidden: boolean;
 }
 
@@ -44,6 +50,7 @@ export function SidebarSections({
   onSelectChat,
   onCreateChat,
   onCreateProject,
+  searchInputRef,
   onAddChatToProject,
   onDeleteChat,
   onPinChat,
@@ -52,12 +59,15 @@ export function SidebarSections({
   onRenameChat,
   onRenameProject,
   onExportChat,
+  isChatSearchOpen,
+  chatSearch,
+  onToggleChatSearch,
+  onCloseChatSearch,
+  onChatSearchChange,
   hidden,
 }: SidebarSectionsProps) {
   const [areChatsExpanded, setAreChatsExpanded] = useState(true);
   const [areProjectsExpanded, setAreProjectsExpanded] = useState(true);
-  const [isChatSearchOpen, setIsChatSearchOpen] = useState(false);
-  const [chatSearch, setChatSearch] = useState("");
   const [openMenuChatId, setOpenMenuChatId] = useState<string | null>(null);
   const [openShareChatId, setOpenShareChatId] = useState<string | null>(null);
   const [openMenuProjectId, setOpenMenuProjectId] = useState<string | null>(null);
@@ -65,6 +75,10 @@ export function SidebarSections({
     { kind: "chat"; id: string; name: string } | { kind: "project"; id: string; name: string } | null
   >(null);
   const { t } = useTranslation();
+
+  useEffect(() => {
+    if (isChatSearchOpen) searchInputRef.current?.focus();
+  }, [isChatSearchOpen, searchInputRef]);
 
   const closeChatMenu = () => {
     setOpenMenuChatId(null);
@@ -106,10 +120,11 @@ export function SidebarSections({
           <div className="flex items-center gap-1">
             <button
               type="button"
+              id="search-chats-button"
               aria-label="Search chats"
               title="Search chats"
               className="sidebar-icon-button hover:bg-[var(--bg-muted)] transition-colors rounded-md p-1"
-              onClick={() => setIsChatSearchOpen((open) => !open)}
+              onClick={onToggleChatSearch}
             >
               <Search size={16} aria-hidden="true" />
             </button>
@@ -128,15 +143,28 @@ export function SidebarSections({
           <div className="px-3 pb-2">
             <input
               type="search"
+              id="sidebar-chat-search"
               aria-label="Search chats"
               placeholder="Search chats"
+              ref={searchInputRef}
               value={chatSearch}
-              onChange={(event) => setChatSearch(event.target.value)}
+              onChange={(event) => onChatSearchChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  onCloseChatSearch();
+                }
+              }}
               className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-meta text-[var(--text-primary)] outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-[var(--focus)]"
             />
           </div>
         )}
-        <ul id="sidebar-chats-list" hidden={!areChatsExpanded} className="space-y-0.5">
+        <ul
+          id="sidebar-chats-list"
+          hidden={!areChatsExpanded}
+          className="space-y-0.5"
+          onClick={onCloseChatSearch}
+        >
           {visibleChats.length === 0 ? (
             <li className="px-3 py-2 text-meta text-tertiary">
               {chats.length === 0 ? t("sidebar.noChats") : "No matching chats"}
@@ -153,7 +181,9 @@ export function SidebarSections({
               >
                 <span className="flex min-w-0 items-center gap-1">
                   {chat.is_pinned && <Pin size={12} aria-label="Pinned" />}
-                  <span className="truncate">{chat.title}</span>
+                  <span className="min-w-0 flex-1 truncate" title={chat.title}>
+                    {chat.title}
+                  </span>
                 </span>
               </button>
               <button
@@ -232,7 +262,7 @@ export function SidebarSections({
                           className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-sec hover:bg-[var(--bg-muted)] hover:text-primary"
                           onClick={() => {
                             closeChatMenu();
-                            onExportChat(chat.id, "pdf");
+                            onExportChat(chat.id, "pdf", chat.title);
                           }}
                         >
                           <FileText size={14} aria-hidden="true" />
@@ -244,11 +274,23 @@ export function SidebarSections({
                           className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-sec hover:bg-[var(--bg-muted)] hover:text-primary"
                           onClick={() => {
                             closeChatMenu();
-                            onExportChat(chat.id, "word");
+                            onExportChat(chat.id, "word", chat.title);
                           }}
                         >
                           <FileType size={14} aria-hidden="true" />
                           Export as Word
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-start text-sec hover:bg-[var(--bg-muted)] hover:text-primary"
+                          onClick={() => {
+                            closeChatMenu();
+                            onExportChat(chat.id, "markdown", chat.title);
+                          }}
+                        >
+                          <FileText size={14} aria-hidden="true" />
+                          Export as Markdown
                         </button>
                       </div>
                     )}
@@ -297,7 +339,12 @@ export function SidebarSections({
             <Plus size={16} aria-hidden="true" />
           </button>
         </div>
-        <ul id="sidebar-projects-list" hidden={!areProjectsExpanded} className="space-y-0.5">
+        <ul
+          id="sidebar-projects-list"
+          hidden={!areProjectsExpanded}
+          className="space-y-0.5"
+          onClick={onCloseChatSearch}
+        >
           {!projectsLoaded ? (
             <li className="px-3 py-2 text-meta text-tertiary">
               {t("sidebar.loadingProjects")}

@@ -157,6 +157,11 @@ html[dir="rtl"] .workspace-sidebar {
   border-left: 1px solid var(--border);
 }
 
+[dir="rtl"] .user-message {
+  margin-left: 0;
+  margin-right: auto;
+}
+
 [dir="rtl"] .text-left {
   text-align: right;
 }

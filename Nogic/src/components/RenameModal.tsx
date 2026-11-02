@@ -23,6 +23,15 @@ export function RenameModal({
     if (open) setName(currentName);
   }, [currentName, open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
   if (!open) return null;
 
   const title = kind === "chat" ? t("sidebar.renameChat") : t("sidebar.renameProject");

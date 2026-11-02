@@ -11,6 +11,7 @@ interface SettingsModelOverviewProps {
   isRefreshing: boolean;
   onFallbackModelChange: (model: string) => void;
   onModelChange: (model: string) => void;
+  onUnloadModel: () => void;
   status: "checking" | "running" | "offline";
   hardwareInfo: HardwareInfo | null;
   hardwareLoading: boolean;
@@ -58,6 +59,7 @@ export function SettingsModelOverview({
   isRefreshing,
   onFallbackModelChange,
   onModelChange,
+  onUnloadModel,
   status,
   hardwareInfo,
   hardwareLoading,
@@ -122,28 +124,38 @@ export function SettingsModelOverview({
       <section className="grid gap-4 sm:grid-cols-2">
         <label className="block text-meta text-[var(--text-secondary)]">
           {t("settings.model")}
-          <select
-            aria-label={t("settings.model")}
-            value={activeSelection}
-            disabled={installedModels.length === 0 || isRefreshing}
-            onChange={(event) => {
-              if (event.target.value) onModelChange(event.target.value);
-            }}
-            className="mt-1 block h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-sec text-[var(--text-primary)] outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-[var(--focus)] disabled:text-[var(--text-tertiary)]"
-          >
-            <option value="">
-              {status === "offline"
-                ? t("settings.ollamaOffline")
-                : installedModels.length > 0
-                  ? t("settings.chooseInstalledModel")
-                  : t("settings.noInstalledModels")}
-            </option>
-            {installedModels.map((model) => (
-              <option key={model} value={model}>
-                {model}
+          <div className="mt-1 flex items-center gap-2">
+            <select
+              aria-label={t("settings.model")}
+              value={activeSelection}
+              disabled={installedModels.length === 0 || isRefreshing}
+              onChange={(event) => {
+                if (event.target.value) onModelChange(event.target.value);
+              }}
+              className="block h-9 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-sec text-[var(--text-primary)] outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-[var(--focus)] disabled:text-[var(--text-tertiary)]"
+            >
+              <option value="">
+                {status === "offline"
+                  ? t("settings.ollamaOffline")
+                  : installedModels.length > 0
+                    ? t("settings.chooseInstalledModel")
+                    : t("settings.noInstalledModels")}
               </option>
-            ))}
-          </select>
+              {installedModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={onUnloadModel}
+              disabled={!activeSelection || status !== "running" || isRefreshing}
+              className="shrink-0 text-meta text-[var(--accent)] hover:underline disabled:text-[var(--text-tertiary)] disabled:no-underline"
+            >
+              Unload Model
+            </button>
+          </div>
         </label>
         <label className="block text-meta text-[var(--text-secondary)]">
           {t("settings.fallbackModel")}

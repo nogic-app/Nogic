@@ -1,38 +1,38 @@
 import { useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
-import { appDataDir, join } from "@tauri-apps/api/path";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import { Button } from "./ui/button.tsx";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
 /** Calm full-screen fallback when the sidecar never answers the boot ping. */
 export function StartupError() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const handleCopyDiagnostics = async () => {
+  const handleCopyDebugInfo = async () => {
     setBusy(true);
     setNotice(null);
     try {
-      const version = await getVersion();
-      const diagString = `Nogic Diagnostics\nVersion: ${version}\nEngine: Failed to Start\nOS: ${navigator.userAgent}`;
-      await writeText(diagString);
-      setNotice("Diagnostics copied");
+      const payload = {
+        app_version: "1.0.1",
+        error: "Sidecar failed to start",
+        os: navigator.userAgent,
+      };
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+      setNotice("Debug info copied");
     } catch (error) {
-      console.error("Could not copy startup diagnostics.", error);
-      setNotice("Could not copy diagnostics. Open the logs folder instead.");
+      console.error("Could not copy startup debug info.", error);
+      setNotice("Could not copy debug info");
     } finally {
       setBusy(false);
     }
   };
 
-  const handleOpenLogs = async () => {
+  const handleRestart = async () => {
     setNotice(null);
     try {
-      await openPath(await join(await appDataDir(), "logs"));
+      await invoke("restart_app");
     } catch (error) {
-      console.error("Could not open the Nogic logs folder.", error);
-      setNotice("Could not open folder");
+      console.error("Could not restart Nogic.", error);
+      setNotice("Could not restart the app");
     }
   };
 
@@ -51,11 +51,11 @@ export function StartupError() {
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <Button variant="outline" disabled={busy} onClick={() => void handleCopyDiagnostics()}>
-          Copy diagnostics
+        <Button variant="outline" disabled={busy} onClick={() => void handleCopyDebugInfo()}>
+          Copy debug info
         </Button>
-        <Button variant="ghost" onClick={() => void handleOpenLogs()}>
-          Open logs
+        <Button variant="ghost" onClick={() => void handleRestart()}>
+          Restart App
         </Button>
       </div>
       {notice && (

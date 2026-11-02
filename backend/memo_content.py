@@ -16,6 +16,48 @@ from source_dedup import deduplicate_sources, preferred_law_name
 EMPTY_SECTION = "None recorded in this conversation."
 
 _LAW_QUALIFIER = re.compile(r"\s*\([^)]*\)")
+_SLASH_COMMAND = re.compile(r"^\s*/(?P<command>\S+)(?:\s+(?P<subject>.*))?$")
+_TRAILING_ELLIPSIS = re.compile(r"\.{3,}\s*$")
+_URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+
+def _clean_site_note(value: str) -> str:
+    """Return one short, readable site note without embedded URLs."""
+    text = _URL.sub("", str(value or ""))
+    text = re.sub(r"[\r\n]+", " \u2022 ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > 300:
+        return f"{text[:297].rstrip()}..."
+    return text
+
+
+def memo_title(raw_title: str) -> str:
+    """Return a readable export title from a chat title."""
+    title = str(raw_title or "").strip()
+    match = _SLASH_COMMAND.match(title)
+    if not match:
+        return _TRAILING_ELLIPSIS.sub("", title).strip() or "Chat"
+
+    command = match.group("command").casefold()
+    subject = _TRAILING_ELLIPSIS.sub(
+        "", (match.group("subject") or "")
+    ).strip()
+    if command == "site":
+        return f"Site Memo: {subject}" if subject else "Site Memo"
+    return subject or "Chat"
+
+
+def split_site_notes(value: str) -> list[str]:
+    """Split web notes into clean, non-empty lines."""
+    parts = re.split(r"[\r\n]+|•", str(value or ""))
+    notes: list[str] = []
+    for part in parts:
+        note = _clean_site_note(re.sub(r"^\s*(?:[-*]\s*)+", "", part))
+        if note:
+            notes.append(note)
+        if len(notes) == 3:
+            break
+    return notes
 
 
 def _legal_items(messages: list[dict[str, Any]]) -> list[list[str]]:
@@ -142,11 +184,13 @@ def _plant_items(messages: list[dict[str, Any]]) -> list[list[str]]:
     return items
 
 
-def _site_items(messages: list[dict[str, Any]]) -> list[list[str]]:
-    """Group OpenStreetMap site payloads into a readable reference block."""
-    items: list[list[str]] = []
+def site_context(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the most recent unique site payload from assistant messages."""
     seen: set[tuple[str, str, str]] = set()
-    for message in messages:
+    latest: dict[str, Any] | None = None
+    for message in reversed(messages):
+        if str(message.get("role") or "").casefold() != "assistant":
+            continue
         site = message.get("site_data")
         if not isinstance(site, dict):
             continue
@@ -158,22 +202,37 @@ def _site_items(messages: list[dict[str, Any]]) -> list[list[str]]:
         if key in seen:
             continue
         seen.add(key)
-        lines = [name]
+        coordinates = ""
         if lat not in (None, "") and lon not in (None, ""):
-            lines.append(f"Coordinates: {lat}, {lon} (OpenStreetMap)")
-        kind = str(site.get("type") or "").strip()
-        if kind:
-            lines.append(f"OSM type: {kind}")
-        for label, field in (
-            ("Plants", "plants"),
-            ("Water", "water"),
-            ("Notes", "notes"),
-        ):
-            value = str(site.get(field) or "").strip()
-            if value:
-                lines.append(f"{label}: {value}")
-        items.append(lines)
-    return items
+            coordinates = f"{lat}, {lon}"
+        latest = {
+            "name": name,
+            "coords": coordinates,
+            "type": str(site.get("type") or "").strip(),
+            "notes": {
+                "Plants": _clean_site_note(str(site.get("plants") or "")),
+                "Water": _clean_site_note(str(site.get("water") or "")),
+                "Site History": _clean_site_note(str(site.get("notes") or "")),
+            },
+        }
+        break
+    return latest
+
+
+def _site_items(messages: list[dict[str, Any]]) -> list[list[str]]:
+    """Group the latest OpenStreetMap site payload into a readable block."""
+    site = site_context(messages)
+    if not site:
+        return []
+    lines = [site["name"]]
+    if site["coords"]:
+        lines.append(f"Coordinates: {site['coords']} (OpenStreetMap)")
+    if site["type"]:
+        lines.append(f"OSM type: {site['type']}")
+    for label, value in site["notes"].items():
+        if value:
+            lines.append(f"{label}: {value}")
+    return [lines]
 
 
 def conversation_items(

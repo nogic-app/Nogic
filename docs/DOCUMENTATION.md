@@ -1,4 +1,4 @@
-# Nogic : User Guide (v1.0.1)
+# Nogic : User Guide (v1.1)
 
 Nogic is a local-first colleague for landscape architecture. It answers from documents you index yourself and from a verified plant table, and it cites its sources. Nothing leaves your machine unless you turn on Web search.
 
@@ -25,6 +25,14 @@ Type in the composer and press Send (or Enter, depending on your General setting
 - **Web** performs a DuckDuckGo search and answers from the top three results. Web results do not carry local law citations or plant cards. If the search finds nothing usable, Nogic says so and answers from local data.
 
 Answers about law cite the exact article and PDF page. Click a citation in the source footer to open that law PDF. Answers about plants only use rows from the verified table; if the table has no match, Nogic replies `Not in the table.`
+
+### AI Chat Titles
+
+After the first message and answer in a new chat, Nogic automatically generates a short title from the first message. The title appears in the sidebar and replaces `New Chat`; later messages do not overwrite it.
+
+### Clear Context
+
+Click the eraser icon in the top header to clear the chat's AI context. Nogic keeps the visible conversation history, but wipes the short-term memory sent to the model from that point onward. This releases context-related VRAM while preserving the conversation for reference.
 
 ## 3. `/add-law` = add a law PDF
 
@@ -80,7 +88,26 @@ Document generation uses the model selected in Settings → Models. If the model
 
 ## 7. Settings & System Updates
 
-In **Settings → Models**, Nogic detects your actual hardware (RAM and VRAM) and recommends models that fit. You can pull new models directly from this screen.
+### Settings → Models
+
+Nogic detects your actual hardware (RAM and VRAM) and recommends models that fit. You can pull new models directly from this screen. The **Model Behavior** section provides:
+
+- **Temperature** slider for controlling response variation.
+- **Context Window** dropdown for choosing how much conversation the model can consider.
+- **Model Deletion** for removing an installed model from Ollama.
+- **Unload Model** for releasing the currently loaded model from VRAM without deleting it.
+
+### Settings → General
+
+The **AI Persona** text area lets you define the assistant's preferred role, tone, or working style. Nogic applies this persona to future chats while keeping its source-grounded behavior.
+
+### Plant Comparison
+
+On plant cards, check the boxes for the species you want to compare. Nogic then generates a deterministic side-by-side comparison table from the verified plant data, including each plant's provenance.
+
+### Markdown Export
+
+Open the **Share** menu in a chat and choose **Export as Markdown** to save the current chat history as a `.md` file.
 
 In **Settings → About**, you will find:
 - **Check for updates:** Nogic checks GitHub for the latest release. If an update is available, you can click to download it directly.

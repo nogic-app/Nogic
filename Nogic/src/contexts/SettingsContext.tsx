@@ -29,6 +29,16 @@ export interface Settings {
   activeModel: string | null;
   /** Model used when the active model is unavailable. */
   fallbackModel: string | null;
+  /** Sampling temperature used for chat responses. */
+  temperature: number;
+  /** Maximum number of context tokens sent to the model. */
+  contextWindow: number;
+  /** How long Ollama keeps the active model loaded in memory. */
+  modelKeepAlive: string;
+  /** Optional custom system persona. */
+  persona: string;
+  /** Latest release notes version acknowledged by the user. */
+  seen_version?: string;
 }
 
 interface SettingsContextValue extends Settings {
@@ -40,6 +50,12 @@ interface SettingsContextValue extends Settings {
   setLanguage: (language: string) => void;
   setActiveModel: (model: string | null) => void;
   setFallbackModel: (model: string | null) => void;
+  setTemperature: (temperature: number) => void;
+  setContextWindow: (contextWindow: number) => void;
+  setModelKeepAlive: (modelKeepAlive: string) => void;
+  setPersona: (persona: string) => void;
+  setSeenVersion: (version: string) => void;
+  settingsLoaded: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -51,6 +67,11 @@ const DEFAULT_SETTINGS: Settings = {
   language: "English",
   activeModel: null,
   fallbackModel: null,
+  temperature: 0.1,
+  contextWindow: 4096,
+  modelKeepAlive: "5m",
+  persona: "",
+  seen_version: undefined,
 };
 
 /** Map UI language labels to locale codes. */
@@ -63,6 +84,8 @@ const LANG_MAP: Record<string, string> = {
 };
 
 const THEMES: ReadonlyArray<Theme> = ["system", "light", "dark"];
+const CONTEXT_WINDOWS = [2048, 4096, 8192, 16384] as const;
+const MODEL_KEEP_ALIVE_VALUES = ["5m", "30m", "1h", "-1", "0"] as const;
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
@@ -91,6 +114,32 @@ function storedSettings(value: unknown): Partial<Settings> {
   if (typeof value.fallbackModel === "string") {
     next.fallbackModel = value.fallbackModel.trim() || null;
   }
+  if (typeof value.temperature === "string") {
+    const temperature = Number(value.temperature);
+    if (Number.isFinite(temperature) && temperature >= 0 && temperature <= 1) {
+      next.temperature = Math.round(temperature * 10) / 10;
+    }
+  }
+  if (typeof value.contextWindow === "string") {
+    const contextWindow = Number(value.contextWindow);
+    if (CONTEXT_WINDOWS.includes(contextWindow as (typeof CONTEXT_WINDOWS)[number])) {
+      next.contextWindow = contextWindow;
+    }
+    if (
+      typeof value.modelKeepAlive === "string" &&
+      MODEL_KEEP_ALIVE_VALUES.includes(
+        value.modelKeepAlive as (typeof MODEL_KEEP_ALIVE_VALUES)[number],
+      )
+    ) {
+      next.modelKeepAlive = value.modelKeepAlive;
+    }
+  }
+  if (typeof value.persona === "string") {
+    next.persona = value.persona;
+  }
+  if (typeof value.seen_version === "string") {
+    next.seen_version = value.seen_version.trim() || undefined;
+  }
   const showSources = booleanValue(value.showSources);
   if (showSources !== undefined) next.showSources = showSources;
   const sendWithEnter = booleanValue(value.sendWithEnter);
@@ -110,6 +159,7 @@ function settingsRecord(value: unknown): value is Record<string, string> {
  */
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,9 +167,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       .then((stored) => {
         if (cancelled) return;
         setSettings((current) => ({ ...current, ...storedSettings(stored) }));
+        setSettingsLoaded(true);
       })
       .catch((error: unknown) => {
         console.error("Could not load the saved settings.", error);
+        setSettingsLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -204,8 +256,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setLanguage: (language) => updateSetting("language", language),
       setActiveModel: (model) => updateModelSetting("activeModel", model),
       setFallbackModel: (model) => updateModelSetting("fallbackModel", model),
+      setTemperature: (temperature) => updateSetting("temperature", temperature),
+      setContextWindow: (contextWindow) =>
+        updateSetting("contextWindow", contextWindow),
+      setModelKeepAlive: (modelKeepAlive) =>
+        updateSetting("modelKeepAlive", modelKeepAlive),
+      setPersona: (persona) => updateSetting("persona", persona),
+      setSeenVersion: (version) => updateSetting("seen_version", version),
+      settingsLoaded,
     }),
-    [settings, updateSetting, updateModelSetting],
+    [settings, settingsLoaded, updateSetting, updateModelSetting],
   );
 
   return (

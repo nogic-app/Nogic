@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { isSystemUsage, type SystemUsage } from "@/types/systemUsage.ts";
 
 /**
- * Poll the Rust shell for real CPU/RAM/VRAM/GPU usage. A failed read clears the
- * value so the UI shows "—" rather than a stale or invented number.
+ * Poll the Rust shell for Nogic + Ollama CPU/RAM and machine VRAM capacity.
+ * A failed read clears the value so the UI shows "—" rather than stale data.
  */
 export function useSystemUsage(intervalMs: number) {
   const [usage, setUsage] = useState<SystemUsage | null>(null);

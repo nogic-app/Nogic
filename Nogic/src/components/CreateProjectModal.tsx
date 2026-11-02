@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChatItem } from "../sidebarData.ts";
 
 interface CreateProjectModalProps {
@@ -17,6 +17,15 @@ export function CreateProjectModal({
   const [name, setName] = useState("");
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
 
   if (!open) return null;
 

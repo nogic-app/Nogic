@@ -14,6 +14,7 @@ import {
 import { isTauriCallbackIdError } from "@/sidecarRequest.ts";
 import { isPlantDataArray } from "@/plants.ts";
 import type { ErrorPayload } from "@/types/errors.ts";
+import { isTokenUsage, type TokenUsage } from "@/types/tokenUsage.ts";
 
 export interface PythonMessageRefs {
   activeRequestId: RefObject<string | null>;
@@ -29,6 +30,7 @@ interface PythonMessageSetters {
   setIsStreaming: Dispatch<SetStateAction<boolean>>;
   setActiveChat: Dispatch<SetStateAction<ChatItem | null>>;
   setErrorPayload: Dispatch<SetStateAction<ErrorPayload | null>>;
+  setLastTokenUsage: Dispatch<SetStateAction<TokenUsage | null>>;
 }
 
 export function usePythonMessages(
@@ -43,7 +45,13 @@ export function usePythonMessages(
     activeChatId,
     chatCache,
   } = refs;
-  const { setMessages, setIsStreaming, setActiveChat, setErrorPayload } = setters;
+  const {
+    setMessages,
+    setIsStreaming,
+    setActiveChat,
+    setErrorPayload,
+    setLastTokenUsage,
+  } = setters;
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -89,16 +97,16 @@ export function usePythonMessages(
           }
 
           if (payload.type === "chat_title_updated") {
+            const titleData = isRecord(payload.data) ? payload.data : payload;
             if (
-              !isRecord(payload.data) ||
-              typeof payload.data.chat_id !== "string" ||
-              typeof payload.data.new_title !== "string"
+              typeof titleData.chat_id !== "string" ||
+              typeof titleData.new_title !== "string"
             ) {
               console.error("Received an invalid chat title update from the Python sidecar.", payload);
               return;
             }
-            const updatedChatId = payload.data.chat_id;
-            const updatedTitle = payload.data.new_title;
+            const updatedChatId = titleData.chat_id;
+            const updatedTitle = titleData.new_title;
             setActiveChat((current) =>
               current?.id === updatedChatId
                 ? { ...current, title: updatedTitle }
@@ -179,6 +187,14 @@ export function usePythonMessages(
           }
 
           if (requestId === null || requestId !== activeRequestId.current) return;
+
+          if (payload.type === "chat_done") {
+            if (isTokenUsage(payload.usage)) {
+              setLastTokenUsage(payload.usage);
+            } else if (payload.usage !== undefined) {
+              console.error("Received invalid token usage from the Python sidecar.", payload);
+            }
+          }
 
           handleChatStreamEvent(
             payload,

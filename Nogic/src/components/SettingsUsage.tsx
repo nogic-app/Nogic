@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useSettings } from "@/contexts/SettingsContext.tsx";
 import { useSystemUsage } from "@/hooks/useSystemUsage.ts";
 import { isModelLoaded, useLoadedModels } from "@/hooks/useLoadedModels.ts";
+import { useAppUsage } from "@/hooks/useAppUsage.ts";
 import { isRecord, requestSidecar } from "@/sidecarRequest.ts";
 import { usagePercentage } from "@/types/systemUsage.ts";
 import { UsageBar } from "./UsageBar.tsx";
@@ -34,14 +35,15 @@ function formatGb(value: number | null | undefined): string {
 }
 
 /**
- * Settings -> Usage. Every number is measured: system stats come from the Rust
- * shell (sysinfo + NVML) and the speed test answers a real prompt.
+ * Settings -> Usage. Every number is measured: process stats come from the
+ * Rust shell (sysinfo), model VRAM from Ollama, and speed from a real prompt.
  */
 export function SettingsUsage() {
   const { t } = useTranslation();
   const { activeModel } = useSettings();
   const usage = useSystemUsage(POLL_INTERVAL_MS);
   const loadedModels = useLoadedModels(POLL_INTERVAL_MS);
+  const appUsage = useAppUsage(POLL_INTERVAL_MS);
   const isLoaded = isModelLoaded(loadedModels, activeModel);
 
   const [speedResult, setSpeedResult] = useState<SpeedResult | null>(null);
@@ -52,7 +54,7 @@ export function SettingsUsage() {
     ? usagePercentage(usage.ram_used_gb, usage.ram_total_gb)
     : null;
   const vramPercent = usage
-    ? usagePercentage(usage.vram_used_gb, usage.vram_total_gb)
+    ? usagePercentage(appUsage?.model_vram_gb, usage.vram_total_gb)
     : null;
 
   const runSpeedTest = async () => {
@@ -111,40 +113,24 @@ export function SettingsUsage() {
           </span>
         </div>
         <p className="mt-3 text-meta text-[var(--text-secondary)]">
-          {usage?.gpu_name ?? t("usage.gpuUnknown", "GPU not detected")} · VRAM{" "}
-          {formatGb(usage?.vram_used_gb)} / {formatGb(usage?.vram_total_gb)} ·
-          RAM {formatGb(usage?.ram_used_gb)} / {formatGb(usage?.ram_total_gb)}
+          {appUsage?.model_name ?? t("usage.noModel", "No model loaded")} ·{" "}
+          {t("usage.modelVram", "Ollama Model VRAM")}{" "}
+          {appUsage?.model_vram ?? "—"} / {formatGb(usage?.vram_total_gb)} ·{" "}
+          {t("usage.appRam", "Nogic + Ollama RAM")} {formatGb(usage?.ram_used_gb)}
         </p>
       </section>
 
       <section className="space-y-4">
         <h3 className="text-title font-medium text-[var(--text-primary)]">
-          {t("usage.system", "System")}
+          {t("usage.appUsage", "Nogic + Ollama")}
         </h3>
         <UsageBar
           label={t("usage.cpu", "CPU")}
           detail={usage ? `${usage.cpu_usage.toFixed(0)}%` : "—"}
           percent={usage ? usage.cpu_usage : null}
         />
-        {usage?.gpu_usage != null && (
-          <UsageBar
-            label={t("usage.gpu", "GPU")}
-            detail={`${usage.gpu_usage.toFixed(0)}%`}
-            percent={usage.gpu_usage}
-          />
-        )}
-        {usage?.igpu_usage != null && (
-          <UsageBar
-            label={
-              usage.igpu_name ||
-              t("usage.integratedGpu", "Integrated GPU")
-            }
-            detail={`${Math.round(usage.igpu_usage)}%`}
-            percent={usage.igpu_usage}
-          />
-        )}
         <UsageBar
-          label={t("usage.ram", "RAM")}
+          label={t("usage.appRam", "Nogic + Ollama RAM")}
           detail={
             usage
               ? `${formatGb(usage.ram_used_gb)} / ${formatGb(usage.ram_total_gb)}`
@@ -153,10 +139,10 @@ export function SettingsUsage() {
           percent={ramPercent}
         />
         <UsageBar
-          label={t("usage.vram", "VRAM")}
+          label={t("usage.modelVram", "Ollama Model VRAM")}
           detail={
-            usage?.vram_total_gb != null
-              ? `${formatGb(usage.vram_used_gb)} / ${formatGb(usage.vram_total_gb)}`
+            usage?.vram_total_gb != null && appUsage?.model_vram
+              ? `${appUsage.model_vram} / ${formatGb(usage.vram_total_gb)}`
               : "—"
           }
           percent={vramPercent}

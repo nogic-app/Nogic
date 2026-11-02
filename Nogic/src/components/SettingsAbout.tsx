@@ -10,8 +10,7 @@ import { isRecord } from "@/sidecarRequest.ts";
 import { collectDiagnostics } from "@/diagnostics.ts";
 
 const ISSUES_URL = "https://github.com/nogic-app/nogic/issues";
-const REPORT_URL_PREFIX =
-  `${ISSUES_URL}/new?title=User%20Report&body=`;
+const REPORT_URL_PREFIX = `${ISSUES_URL}/new?body=`;
 const MAX_DIAGNOSTICS_CHARS = 4000;
 const MAX_REPORT_URL_LENGTH = 8000;
 const LATEST_RELEASE_URL =
@@ -37,7 +36,7 @@ const LINKS: AboutLink[] = [
   { key: "reportProblem", url: ISSUES_URL },
 ];
 
-export function SettingsAbout() {
+export function SettingsAbout({ onOpenChangelog }: { onOpenChangelog?: () => void }) {
   const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState("1.1.0");
   const [latestRelease, setLatestRelease] = useState<LatestRelease | null>(null);
@@ -159,7 +158,11 @@ export function SettingsAbout() {
             Nogic
           </p>
           <p className="text-meta text-[var(--text-secondary)]">
-            Version {appVersion}
+            <span>Version {appVersion}</span>
+            <span aria-hidden="true"> · </span>
+            <button type="button" onClick={onOpenChangelog} className="text-[var(--accent)] underline underline-offset-2">
+              What's new?
+            </button>
           </p>
         </div>
       </div>

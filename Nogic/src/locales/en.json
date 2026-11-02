@@ -50,6 +50,8 @@
     "keyboardShortcuts": "Keyboard shortcuts",
     "enableShortcuts": "Enable keyboard shortcuts",
     "newChat": "New chat",
+    "newProject": "New project",
+    "search": "Search",
     "focusComposer": "Focus composer",
     "openSettings": "Open settings",
     "startup": "Startup",

@@ -49,6 +49,8 @@
     "keyboardShortcuts": "Atajos de teclado",
     "enableShortcuts": "Activar atajos de teclado",
     "newChat": "Nuevo chat",
+    "newProject": "Nuevo proyecto",
+    "search": "Buscar",
     "focusComposer": "Enfocar el redactor",
     "openSettings": "Abrir ajustes",
     "startup": "Inicio",

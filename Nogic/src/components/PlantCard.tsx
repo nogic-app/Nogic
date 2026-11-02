@@ -12,10 +12,12 @@ export function Latin({ children }: { children: ReactNode }) {
 }
 
 export interface Plant {
+  id: string;
   latin: string;
   common: string;
   water: string;
   sun: string;
+  nativeRegion: string;
   sourceUrl: string;
   /** Verbatim quote. Never invent: use the TODO placeholder until sourced. */
   quote: string;
@@ -65,12 +67,16 @@ interface PlantCardProps {
   plant: Plant;
   labels?: PlantLabels;
   defaultOpen?: boolean;
+  selected?: boolean;
+  onSelectionChange?: (selected: boolean) => void;
 }
 
 export function PlantCard({
   plant,
   labels = DEFAULT_PLANT_LABELS,
   defaultOpen = false,
+  selected = false,
+  onSelectionChange,
 }: PlantCardProps) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -84,39 +90,51 @@ export function PlantCard({
   const sourceUrl = primarySourceUrl(plant.sourceUrl);
 
   return (
-    <li>
+    <li className={selected ? "rounded-lg ring-1 ring-[var(--accent)]" : undefined}>
       <div
         className={cn(
           "rounded-lg border transition-colors",
           open ? "border-border bg-elevated shadow-quiet" : "border-transparent hover:bg-muted",
         )}
       >
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-          className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-3 py-2 text-start text-body"
-        >
-          <Latin>{latin}</Latin>
-          {common && (
-            <>
-              <span className="text-tertiary">·</span>
-              <span>{common}</span>
-            </>
+        <div className="flex w-full items-center gap-x-2 rounded-lg px-3 py-2">
+          {onSelectionChange && (
+            <input
+              type="checkbox"
+              checked={selected}
+              aria-label={`Select ${common || latin} for comparison`}
+              onChange={(event) => onSelectionChange(event.target.checked)}
+              onClick={(event) => event.stopPropagation()}
+              className="accent-[var(--accent)]"
+            />
           )}
-          <span className="text-tertiary">·</span>
-          <Pill variant={plant.verified ? "accent" : "warning"}>
-            {plant.verified ? labels.verified : labels.unverified}
-          </Pill>
-          {water && (
-            <>
-              <span className="text-tertiary">·</span>
-              <span className="text-secondary">
-                {labels.water}: {water}
-              </span>
-            </>
-          )}
-        </button>
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-start text-body"
+          >
+            <Latin>{latin}</Latin>
+            {common && (
+              <>
+                <span className="text-tertiary">·</span>
+                <span>{common}</span>
+              </>
+            )}
+            <span className="text-tertiary">·</span>
+            <Pill variant={plant.verified ? "accent" : "warning"}>
+              {plant.verified ? labels.verified : labels.unverified}
+            </Pill>
+            {water && (
+              <>
+                <span className="text-tertiary">·</span>
+                <span className="text-secondary">
+                  {labels.water}: {water}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
 
         {open && (
           <div className="space-y-3 border-t border-border px-3 pb-3 pt-3 text-sec">

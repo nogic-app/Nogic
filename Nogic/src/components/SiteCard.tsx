@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   GeoJSON,
   MapContainer,
   Marker,
   TileLayer,
+  useMap,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -44,6 +45,26 @@ export interface SiteData {
   notes: string;
 }
 
+function MapCaptureSync({
+  mapRef,
+}: {
+  mapRef: React.MutableRefObject<L.Map | null>;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    mapRef.current = map;
+    const invalidateMapSize = () => map.invalidateSize();
+    window.addEventListener("nogic-map-capture", invalidateMapSize);
+    return () => {
+      window.removeEventListener("nogic-map-capture", invalidateMapSize);
+      if (mapRef.current === map) mapRef.current = null;
+    };
+  }, [map, mapRef]);
+
+  return null;
+}
+
 function formatArea(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value) || value <= 0) return "—";
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} km²`;
@@ -65,6 +86,7 @@ function parseDisplayName(displayName: string): { title: string; subtitle: strin
 }
 
 export function SiteCard({ data }: { data: SiteData }) {
+  const mapRef = useRef<L.Map | null>(null);
   const parsed = useMemo(() => {
     if (data.name && data.subtitle) {
       return { title: data.name, subtitle: data.subtitle };
@@ -92,13 +114,14 @@ export function SiteCard({ data }: { data: SiteData }) {
       </div>
 
       <div className="border-b border-[var(--border)]">
-        <div className="h-[220px] w-full overflow-hidden">
+        <div className="leaflet-map-capture h-[220px] w-full overflow-hidden">
           <MapContainer
             center={mapCenter}
             zoom={15}
             scrollWheelZoom={false}
             style={{ height: "100%", width: "100%" }}
           >
+            <MapCaptureSync mapRef={mapRef} />
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use serde::Serialize;
-use sysinfo::System;
+use sysinfo::{ProcessesToUpdate, System};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_opener::OpenerExt;
@@ -496,8 +496,8 @@ fn integrated_gpu_name() -> Option<String> {
     IGPU_NAME.get_or_init(detect_integrated_gpu_name).clone()
 }
 
-/// Live system usage. `None` on the VRAM/GPU fields means "not measurable on
-/// this machine" so the UI can show "—" instead of inventing a number.
+/// Live Nogic and Ollama process usage. `None` on the VRAM/GPU fields means
+/// "not measurable on this machine" so the UI can show "—".
 #[derive(Serialize)]
 struct SystemUsage {
     cpu_usage: f32,
@@ -514,7 +514,6 @@ struct SystemUsage {
 // One long-lived System keeps the CPU sampler's previous tick, so polling
 // returns a real delta instead of a fresh process's first-sample zero.
 static USAGE_SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
-static USAGE_NVML: OnceLock<Option<nvml_wrapper::Nvml>> = OnceLock::new();
 
 fn read_system_usage() -> SystemUsage {
     let mut cpu_usage = 0.0_f32;
@@ -523,35 +522,41 @@ fn read_system_usage() -> SystemUsage {
 
     let system = USAGE_SYSTEM.get_or_init(|| Mutex::new(System::new()));
     if let Ok(mut sys) = system.lock() {
+        sys.refresh_all();
         // sysinfo derives CPU usage from the delta between two samples. Refresh,
         // let the documented minimum window elapse, then refresh again so the
         // reading covers a real interval. Two refreshes back-to-back produced a
         // near-zero window and the drift from Task Manager.
         sys.refresh_cpu_all();
+        sys.refresh_memory();
         std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
         sys.refresh_cpu_usage();
-        cpu_usage = if sys.cpus().is_empty() {
-            0.0
-        } else {
-            sys.global_cpu_usage().clamp(0.0, 100.0)
-        };
-        sys.refresh_memory();
-        ram_used_gb = round1(sys.used_memory() as f32 / BYTES_PER_GIB);
-        ram_total_gb = round1(sys.total_memory() as f32 / BYTES_PER_GIB);
+        sys.refresh_processes(ProcessesToUpdate::All, true);
+        for process in sys.processes().values() {
+            let name = process.name().to_string_lossy();
+            if name.eq_ignore_ascii_case("nogic.exe")
+                || name.eq_ignore_ascii_case("ollama.exe")
+            {
+                cpu_usage += process.cpu_usage();
+                ram_used_gb += process.memory() as f32 / BYTES_PER_GIB;
+            }
+        }
+        cpu_usage = cpu_usage.clamp(0.0, 100.0);
+        ram_total_gb = sys.total_memory() as f32 / BYTES_PER_GIB;
     }
 
-    let nvml = USAGE_NVML.get_or_init(|| nvml_wrapper::Nvml::init().ok());
+    let nvml = nvml_wrapper::Nvml::init().ok();
     let mut vram_used_gb = None;
     let mut vram_total_gb = None;
     let mut gpu_usage = None;
     let mut gpu_name = None;
 
-    if let Some(nvml) = nvml {
+    if let Some(nvml) = nvml.as_ref() {
         if let Ok(device) = nvml.device_by_index(0) {
             gpu_name = device.name().ok();
             if let Ok(memory) = device.memory_info() {
-                vram_used_gb = Some(round1(memory.used as f32 / BYTES_PER_GIB));
-                vram_total_gb = Some(round1(memory.total as f32 / BYTES_PER_GIB));
+                vram_used_gb = Some(memory.used as f32 / BYTES_PER_GIB);
+                vram_total_gb = Some(memory.total as f32 / BYTES_PER_GIB);
             }
             if let Ok(utilization) = device.utilization_rates() {
                 gpu_usage = Some((utilization.gpu as f32).clamp(0.0, 100.0));
@@ -567,7 +572,7 @@ fn read_system_usage() -> SystemUsage {
     };
 
     SystemUsage {
-        cpu_usage: round1(cpu_usage),
+        cpu_usage,
         ram_used_gb,
         ram_total_gb,
         vram_used_gb,

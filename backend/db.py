@@ -62,6 +62,7 @@ def init_db():
                 title TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 is_pinned INTEGER NOT NULL DEFAULT 0,
+                context_start_id TEXT,
                 FOREIGN KEY (project_id) REFERENCES projects(id)
             );
 
@@ -109,6 +110,10 @@ def init_db():
                 tokenize='unicode61 remove_diacritics 2'
             );
         """)
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('modelKeepAlive', '5m') "
+            "ON CONFLICT(key) DO NOTHING"
+        )
 
         # FTS5 virtual tables cannot be altered in place, so rebuild when a
         # schema is missing either metadata column.
@@ -251,6 +256,8 @@ def init_db():
             conn.execute(
                 "ALTER TABLE chats ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0"
             )
+        if "context_start_id" not in chat_columns:
+            conn.execute("ALTER TABLE chats ADD COLUMN context_start_id TEXT")
 
 def save_message(
     chat_id,
@@ -386,6 +393,21 @@ def set_chat_pinned(chat_id, is_pinned):
         result = conn.execute(
             "UPDATE chats SET is_pinned = ? WHERE id = ?",
             (1 if is_pinned else 0, chat_id),
+        )
+    return result.rowcount == 1
+
+
+def clear_chat_context(chat_id):
+    """Set the visible latest message as the start of the new AI context."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM messages WHERE chat_id = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (chat_id,),
+        ).fetchone()
+        result = conn.execute(
+            "UPDATE chats SET context_start_id = ? WHERE id = ?",
+            (row["id"] if row else None, chat_id),
         )
     return result.rowcount == 1
 

@@ -36,6 +36,22 @@ Nogic is a local-first AI colleague for landscape architecture. It runs entirely
 
 ![Nogic site map powered by OpenStreetMap](docs/screenshots/06-site-map.png)
 
+### V1.1 usage dashboard
+
+![Nogic usage dashboard](docs/screenshots/v1.1-usage.png)
+
+### V1.1 plant comparison
+
+![Nogic side-by-side plant comparison](docs/screenshots/v1.1-compare.png)
+
+### V1.1 model settings
+
+![Nogic model behavior settings](docs/screenshots/v1.1-models.png)
+
+### V1.1 clear context
+
+![Nogic clear context control](docs/screenshots/v1.1-clear-context.png)
+
 ## Key Features
 
 - **Honest RAG** : Law and Plant databases with source citations.
@@ -43,6 +59,8 @@ Nogic is a local-first AI colleague for landscape architecture. It runs entirely
 - **Vision & Document Processing** : Upload images, PDFs, Word, and Excel files for the AI to read.
 - **AI Skills** : Generate structured PDF, Word, and Excel documents.
 - **Multi-language** : UI support for EN, FR, AR (RTL), ES, and PT.
+- **Total AI Control** : VRAM management (`keep_alive`), temperature sliders, context window sizing, and custom personas.
+- **Advanced UX** : AI-generated chat titles, clear context (eraser), deterministic plant comparisons, and token usage indicators.
 
 ## Why Nogic? (Built on Honesty)
 
@@ -77,6 +95,13 @@ This app would not be possible without the incredible open-source community. Spe
 ## The SmartScreen Note
 
 Because Nogic is an independent, open-source project, the Windows installer is not code-signed. Windows SmartScreen will flag it. This is normal for indie software; you can safely click “More info” → “Run anyway”.
+
+Note: The installer requires Administrator (UAC) rights to install per-machine.
+
+## Development
+
+See [Developer Setup](docs/DEVELOPER_SETUP.md) for Python dependency installation,
+PyInstaller sidecar builds, and running the Tauri development app.
 
 ## License
 

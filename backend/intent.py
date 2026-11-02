@@ -65,6 +65,14 @@ LAW_INTENT_PHRASES = (
     "etude d impact",
     "etude d'impact",
 )
+CONVERSATION_REFERENCE_PHRASES = (
+    "my favorite",
+    "i said",
+    "remember",
+    "earlier",
+    "just said",
+    "what did i say",
+)
 
 
 def _normalize(text: str) -> str:
@@ -85,6 +93,8 @@ def classify_intent(question: str) -> str:
     planted screen" stays in the cited-law path.
     """
     normalized = _normalize(question)
+    if any(phrase in normalized for phrase in CONVERSATION_REFERENCE_PHRASES):
+        return "general"
     words = set(normalized.split())
     if words & LAW_INTENT_WORDS:
         return "law"

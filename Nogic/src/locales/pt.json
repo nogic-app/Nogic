@@ -49,6 +49,8 @@
     "keyboardShortcuts": "Atalhos de teclado",
     "enableShortcuts": "Ativar atalhos de teclado",
     "newChat": "Nova conversa",
+    "newProject": "Novo projeto",
+    "search": "Pesquisar",
     "focusComposer": "Focar no campo de texto",
     "openSettings": "Abrir configurações",
     "startup": "Inicialização",

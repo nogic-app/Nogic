@@ -16,6 +16,23 @@ export function parseCapabilities(value: unknown): string[] {
     .filter((capability) => capability.length > 0);
 }
 
+function hasKnownVisionModelName(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return ["vision", "llava", "gemma4", "qwen2-vl", "qwen2.5vl", "minicpm"].some(
+    (marker) => normalized.includes(marker),
+  );
+}
+
+function capabilitiesWithVisionFallback(
+  model: string,
+  capabilities: string[],
+): string[] {
+  if (capabilities.length > 0 || !hasKnownVisionModelName(model)) {
+    return capabilities;
+  }
+  return ["vision"];
+}
+
 /**
  * Ask the sidecar which capabilities the active model reports. `null` means
  * the answer has not arrived (or Ollama could not be reached), so callers can
@@ -36,12 +53,16 @@ export function useModelCapabilities(model: string): string[] | null {
       6000,
     )
       .then((value) => {
-        if (!cancelled) setCapabilities(parseCapabilities(value));
+        if (!cancelled) {
+          setCapabilities(
+            capabilitiesWithVisionFallback(model, parseCapabilities(value)),
+          );
+        }
       })
       .catch((error: unknown) => {
         if (cancelled) return;
         console.error("Could not read the model capabilities.", error);
-        setCapabilities(null);
+        setCapabilities(capabilitiesWithVisionFallback(model, []));
       });
 
     return () => {

@@ -3,22 +3,23 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 from xml.sax.saxutils import escape
-
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT
-from reportlab.lib.units import mm
-from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
 
 from memo_content import (
     EMPTY_SECTION,
     legal_constraint_items,
     memo_sections,
     plant_table_items,
+    site_context,
     source_items,
+    split_site_notes,
 )
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.units import mm
+from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
 
 RULE = colors.HexColor("#E5E3DD")
 ACCENT_SUBTLE = colors.HexColor("#E8EDE7")
@@ -55,6 +56,9 @@ def append_sources(
     styles: dict[str, Any],
     paragraph: ParagraphFactory,
 ) -> None:
+    sources = source_items(messages)
+    if not sources:
+        return
     story.extend([
         PageBreak(),
         paragraph("Sources", styles["title"]),
@@ -63,10 +67,6 @@ def append_sources(
             styles["meta"],
         ),
     ])
-    sources = source_items(messages)
-    if not sources:
-        story.append(paragraph(EMPTY_SECTION, styles["empty"]))
-        return
     for index, (label, details) in enumerate(sources, start=1):
         story.append(paragraph(f"[{index}] {escape(label)}", styles["source_lead"]))
         detail = details[0] if details else "Source details unavailable."
@@ -114,9 +114,11 @@ def append_memo_sections(
     paragraph: ParagraphFactory,
     clean_markdown: Callable[[str], str],
     fix_arabic: Callable[[str], str],
+    site_map_path: str | None = None,
 ) -> None:
     for heading, items in memo_sections(messages):
-        story.append(paragraph(heading, styles["section"]))
+        if heading != "Site Context":
+            story.append(paragraph(heading, styles["section"]))
         if heading == "Legal Constraints":
             legal_items = legal_constraint_items(messages)
             if not legal_items:
@@ -146,6 +148,51 @@ def append_memo_sections(
             story.append(table)
         elif heading == "Plant Palette":
             append_plant_table(story, messages, styles, paragraph)
+        elif heading == "Site Context" and items:
+            site = site_context(messages)
+            if site:
+                story.append(
+                    paragraph(
+                        f"<b>Site Memo: {escape(site['name'])}</b>",
+                        styles["lead"],
+                    )
+                )
+                if site_map_path:
+                    from reportlab.platypus import Image
+
+                    story.append(Image(site_map_path, width=500, height=220))
+                if site["coords"]:
+                    lat, lon = site["coords"].split(", ", 1)
+                    story.append(paragraph(f"Coordinates: {escape(site['coords'])}", styles["detail"]))
+                    link = (
+                        "https://www.openstreetmap.org/"
+                        f"?mlat={lat}&mlon={lon}#map=13/{lat}/{lon}"
+                    )
+                    story.append(
+                        paragraph(
+                            f'<link href="{escape(link)}" color="#4A6B4E">'
+                            "Open in OpenStreetMap</link>",
+                            styles["detail"],
+                        )
+                    )
+                for label, value in site["notes"].items():
+                    for index, note in enumerate(split_site_notes(value)):
+                        prefix = f"<b>{escape(label)}:</b> " if index == 0 else ""
+                        story.append(
+                            paragraph(
+                                f"&bull; {prefix}"
+                                f"{escape(clean_markdown(note))}",
+                                styles["detail"],
+                                alignment=TA_LEFT,
+                            )
+                        )
+                story.append(
+                    paragraph(
+                        "Map data © OpenStreetMap contributors",
+                        styles["caption"],
+                        alignment=TA_LEFT,
+                    )
+                )
         elif not items:
             story.append(paragraph(EMPTY_SECTION, styles["empty"]))
         else:

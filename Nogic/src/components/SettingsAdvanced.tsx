@@ -6,6 +6,7 @@ import { appDataDir } from "@tauri-apps/api/path";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import { TesseractRequirement } from "./TesseractRequirement.tsx";
+import { ClearLawLibraryModal } from "./ClearLawLibraryModal.tsx";
 
 const COMMANDS: ReadonlyArray<{ command: string; description: string }> = [
   { command: "/add-law", description: "Add a custom law PDF to the local library." },
@@ -18,6 +19,7 @@ const COMMANDS: ReadonlyArray<{ command: string; description: string }> = [
 export function SettingsAdvanced() {
   const { t } = useTranslation();
   const [resetOpen, setResetOpen] = useState(false);
+  const [clearLawLibraryOpen, setClearLawLibraryOpen] = useState(false);
   const [ollamaAddress, setOllamaAddress] = useState("http://localhost:11434");
   const [dataPath, setDataPath] = useState<string>(t("settings.loading"));
 
@@ -67,6 +69,25 @@ export function SettingsAdvanced() {
           >
             {t("settings.openFolder")}
           </a>
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-title font-medium text-[var(--text-primary)]">
+          Law library
+        </h3>
+        <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
+          Remove all indexed articles and uploaded law PDFs.
+        </p>
+        <div className="mt-3">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setClearLawLibraryOpen(true)}
+            className="border-[var(--danger)] text-[var(--danger)] hover:bg-[var(--danger)] hover:text-white"
+          >
+            Clear Law Library
+          </Button>
         </div>
       </section>
 
@@ -126,6 +147,10 @@ export function SettingsAdvanced() {
       </section>
 
       <FactoryResetModal open={resetOpen} onClose={() => setResetOpen(false)} />
+      <ClearLawLibraryModal
+        open={clearLawLibraryOpen}
+        onClose={() => setClearLawLibraryOpen(false)}
+      />
     </div>
   );
 }

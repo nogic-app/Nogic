@@ -1,9 +1,12 @@
 import json
+import base64
+import binascii
 import logging
 import os
 import shutil
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -11,12 +14,14 @@ from uuid import uuid4
 import ollama
 
 from chat_modes import get_chat_modes
+from chat_engine import generate_title_async
 from chat_pipeline import run_chat
 from db import (
     create_chat as persist_chat,
     create_project as persist_project,
     add_chat_to_project,
     count_law_articles,
+    clear_chat_context,
     get_connection,
     get_messages,
     get_settings,
@@ -175,7 +180,7 @@ def resolve_chat_model(request: dict[str, object]) -> str:
 
 def factory_reset() -> None:
     if Path(DB_PATH).exists():
-        Path(DB_PATH).unlink()
+        Path(DB_PATH).unlink(missing_ok=True)
     memory_directory = APP_DATA_ROOT / "memory"
     if memory_directory.exists():
         shutil.rmtree(memory_directory)
@@ -327,6 +332,20 @@ def main():
                     "type": "response",
                     "id": req_id,
                     "data": count_law_articles(),
+                }), flush=True)
+
+            elif action == "clear_law_library":
+                with get_connection() as conn:
+                    conn.execute("DELETE FROM law_articles")
+                    conn.execute("DELETE FROM law_article_hashes")
+                laws_directory = DATA_DIR / "laws"
+                if laws_directory.exists():
+                    for law_file in laws_directory.glob("*.pdf"):
+                        law_file.unlink()
+                print(json.dumps({
+                    "type": "response",
+                    "id": req_id,
+                    "data": {"success": True},
                 }), flush=True)
 
             elif action == "save_memory_file":
@@ -507,11 +526,33 @@ def main():
                 chat_id = req.get("chat_id")
                 if not isinstance(chat_id, str) or not chat_id.strip():
                     raise ValueError("The chat_id must be a non-empty string.")
-                file_path = (
-                    export_chat_pdf(chat_id)
-                    if action == "export_pdf"
-                    else export_chat_docx(chat_id)
-                )
+                map_image = req.get("map_image")
+                map_capture_path = None
+                if map_image is not None:
+                    if not isinstance(map_image, str) or not map_image.startswith(
+                        "data:image/"
+                    ):
+                        raise ValueError("The map_image must be a base64 image data URL.")
+                    try:
+                        encoded = map_image.split(",", 1)[1]
+                        image_bytes = base64.b64decode(encoded, validate=True)
+                    except (IndexError, ValueError, binascii.Error) as error:
+                        raise ValueError("The map_image is not valid base64.") from error
+                    if not image_bytes:
+                        raise ValueError("The map_image is empty.")
+                    map_capture_path = str(
+                        Path(tempfile.gettempdir()) / "map_capture.jpg"
+                    )
+                    Path(map_capture_path).write_bytes(image_bytes)
+                try:
+                    file_path = (
+                        export_chat_pdf(chat_id, map_image_path=map_capture_path)
+                        if action == "export_pdf"
+                        else export_chat_docx(chat_id, map_image_path=map_capture_path)
+                    )
+                finally:
+                    if map_capture_path:
+                        Path(map_capture_path).unlink(missing_ok=True)
                 print(json.dumps({
                     "type": "response",
                     "id": req_id,
@@ -629,7 +670,9 @@ def main():
             elif action in (
                 "get_ollama_status",
                 "get_installed_models",
+                "delete_model",
                 "get_loaded_models",
+                "get_app_usage",
                 "get_model_capabilities",
                 "pull_model",
                 "cancel_pull",
@@ -667,6 +710,18 @@ def main():
                     "data": get_messages(chat_id),
                 }), flush=True)
 
+            elif action == "clear_context":
+                chat_id = req.get("chat_id")
+                if not isinstance(chat_id, str) or not chat_id.strip():
+                    raise ValueError("The chat_id must be a non-empty string.")
+                if not clear_chat_context(chat_id):
+                    raise ValueError("The requested chat no longer exists.")
+                print(json.dumps({
+                    "type": "response",
+                    "id": req_id,
+                    "data": True,
+                }), flush=True)
+
             elif action == "check_file_exists":
                 file_path = req.get("file_path")
                 if not isinstance(file_path, str) or not file_path.strip():
@@ -701,6 +756,25 @@ def main():
                     raise ValueError("The chat_id must be a string.")
                 model = resolve_chat_model(req)
                 modes = get_chat_modes(req)
+                temperature = req.get("temperature", 0.1)
+                num_ctx = req.get("num_ctx", 4096)
+                persona = req.get("persona", "")
+                keep_alive = req.get("keep_alive", "5m")
+                if (
+                    not isinstance(temperature, (int, float))
+                    or isinstance(temperature, bool)
+                    or not 0 <= temperature <= 1
+                ):
+                    raise ValueError("Temperature must be between 0 and 1.")
+                if (
+                    not isinstance(num_ctx, int)
+                    or num_ctx not in {2048, 4096, 8192, 16384}
+                ):
+                    raise ValueError("Context window must be 2048, 4096, 8192, or 16384.")
+                if not isinstance(persona, str):
+                    raise ValueError("Persona must be a string.")
+                if keep_alive not in {"5m", "30m", "1h", "-1", "0"}:
+                    raise ValueError("Keep-alive must be 5m, 30m, 1h, -1, or 0.")
                 tier, budget = budget_for_hardware(req.get("hardware"))
                 logger.info("Chat request using hardware tier %s", tier)
                 messages = req.get("messages", [])
@@ -730,19 +804,7 @@ def main():
                     if chat is None:
                         raise ValueError("The requested chat no longer exists. Start a new chat.")
                     chat_title = str(chat["title"])
-                    if chat["title"] == "New Chat":
-                        new_title = user_message_content[:30] + "..."
-                        result = conn.execute(
-                            "UPDATE chats SET title = ? WHERE id = ? AND title = 'New Chat'",
-                            (new_title, chat_id),
-                        )
-                        if result.rowcount == 1:
-                            chat_title = new_title
-                            print(json.dumps({
-                                "type": "chat_title_updated",
-                                "id": req_id,
-                                "data": {"chat_id": chat_id, "new_title": new_title},
-                            }), flush=True)
+                    should_generate_title = chat["title"] == "New Chat"
                 save_message(
                     chat_id,
                     "user",
@@ -790,6 +852,10 @@ def main():
                         num_predict=budget["num_predict"],
                         extractive=budget["extractive"],
                         title=chat_title,
+                        temperature=float(temperature),
+                        num_ctx=num_ctx,
+                        persona=persona,
+                        keep_alive=keep_alive,
                     )
                 except Exception as error:
                     payload = emit_error(req_id, error)
@@ -835,7 +901,14 @@ def main():
                         "file_path": result.get("generated_file_path"),
                         "file_size": result.get("generated_file_size"),
                         "file_type": result.get("generated_file_type"),
+                        "usage": result.get("usage"),
                     }), flush=True)
+                    if should_generate_title:
+                        threading.Thread(
+                            target=generate_title_async,
+                            args=(chat_id, user_message_content, model, keep_alive),
+                            daemon=True,
+                        ).start()
 
         except Exception as error:
             emit_error(req_id, error)

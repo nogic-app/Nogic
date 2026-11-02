@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button.tsx";
 import { Pill } from "./Pill.tsx";
 import { useTranslation } from "react-i18next";
@@ -15,10 +15,12 @@ interface SettingsModelListProps {
   isCancelling: boolean;
   onCancel: () => void;
   onPull: (model: ModelOption) => void;
+  onDelete: (model: string) => void;
   onRefresh: () => void;
   onUse: (model: string) => void;
   isRefreshing: boolean;
   pullingModel: string | null;
+  deletingModel: string | null;
   pullStatus: string;
   status: "checking" | "running" | "offline";
 }
@@ -31,10 +33,12 @@ export function SettingsModelList({
   isCancelling,
   onCancel,
   onPull,
+  onDelete,
   onRefresh,
   onUse,
   isRefreshing,
   pullingModel,
+  deletingModel,
   pullStatus,
   status,
 }: SettingsModelListProps) {
@@ -130,12 +134,28 @@ export function SettingsModelList({
                     {isCancelling ? t("settings.cancelling") : t("settings.cancel")}
                   </Button>
                 ) : isInstalled ? (
-                  <Button
-                    variant={activeModel === model.name ? "outline" : "accent"}
-                    onClick={() => onUse(model.name)}
-                  >
-                    {t("settings.use")}
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant={activeModel === model.name ? "outline" : "accent"}
+                      onClick={() => onUse(model.name)}
+                    >
+                      {t("settings.use")}
+                    </Button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${model.name}`}
+                      title={`Delete ${model.name}`}
+                      disabled={deletingModel !== null}
+                      onClick={() => {
+                        if (window.confirm("Are you sure you want to delete this model?")) {
+                          onDelete(model.name);
+                        }
+                      }}
+                      className="rounded-md p-2 text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-muted)] hover:text-[var(--danger)] disabled:opacity-40"
+                    >
+                      <Trash2 size={15} aria-hidden="true" />
+                    </button>
+                  </div>
                 ) : (
                   <Button
                     variant="outline"

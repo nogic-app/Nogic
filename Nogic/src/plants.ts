@@ -82,10 +82,14 @@ function formatSun(value: string | null | undefined): string {
 
 export function toPlantCard(plant: PlantData): Plant {
   return {
+    id: plant.id,
     latin: text(plant.latin_name),
     common: text(plant.common_name),
     water: formatWater(plant.water_need),
     sun: formatSun(plant.sun_exposure),
+    nativeRegion: plant.native_to_morocco
+      ? "Native to Morocco"
+      : "Not marked native to Morocco",
     sourceUrl: text(plant.source_url),
     quote: text(plant.source_quote),
     verified: plant.verified,

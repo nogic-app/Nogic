@@ -1,34 +1,66 @@
 import { useEffect } from "react";
+import { useSettings } from "@/contexts/SettingsContext.tsx";
 
-export function useKeyboardShortcuts(
-  enabled: boolean,
-  onOpenSettings: () => void,
-): void {
+interface KeyboardShortcutActions {
+  onOpenSettings: () => void;
+  onCreateChat: () => void;
+  onCreateProject: () => void;
+  onToggleSearch: () => void;
+  onEscape: () => void;
+}
+
+export function useKeyboardShortcuts(actions: KeyboardShortcutActions): void {
+  const { enableShortcuts } = useSettings();
+
   useEffect(() => {
-    if (!enabled) return;
+    if (!enableShortcuts) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) {
+      if (event.key === "Escape") {
+        const activeElement = document.activeElement;
+        if (
+          activeElement instanceof HTMLInputElement ||
+          activeElement instanceof HTMLTextAreaElement ||
+          activeElement instanceof HTMLElement && activeElement.isContentEditable
+        ) {
+          activeElement.blur();
+        } else {
+          actions.onEscape();
+        }
+        event.preventDefault();
         return;
       }
 
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+
       switch (event.key.toLowerCase()) {
         case ",":
+          if (event.shiftKey) return;
           event.preventDefault();
-          onOpenSettings();
+          actions.onOpenSettings();
           break;
         case "l":
+          if (event.shiftKey) return;
           event.preventDefault();
           document.getElementById("chat-composer")?.focus();
           break;
         case "n":
           event.preventDefault();
-          document.getElementById("new-chat-button")?.click();
+          if (event.shiftKey) {
+            actions.onCreateProject();
+          } else {
+            actions.onCreateChat();
+          }
+          break;
+        case "k":
+          if (event.shiftKey) return;
+          event.preventDefault();
+          actions.onToggleSearch();
           break;
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [enabled, onOpenSettings]);
+  }, [actions, enableShortcuts]);
 }

@@ -143,6 +143,10 @@ def run_chat(
     num_predict: int | None = None,
     extractive: bool = False,
     title: str = "Report",
+    temperature: float = 0.1,
+    num_ctx: int = 4096,
+    persona: str = "",
+    keep_alive: str = "5m",
 ) -> dict[str, Any]:
     """Run one chat turn and return the answer plus citation payloads.
 
@@ -152,6 +156,7 @@ def run_chat(
     Reasoning is accumulated into `thinking_parts` so the caller can persist
     it even when generation fails partway through.
     """
+    usage: dict[str, int] = {}
     command_parts = question.strip().split(maxsplit=1)
     command = command_parts[0] if command_parts else ""
     argument = command_parts[1].strip() if len(command_parts) > 1 else ""
@@ -420,6 +425,9 @@ def run_chat(
     if extractive and intent == "law":
         system_prompt = f"{system_prompt}\n\n{EXTRACTIVE_INSTRUCTION}"
 
+    normalized_persona = persona.strip()
+    if normalized_persona:
+        system_prompt = f"{normalized_persona}\n\n{system_prompt}"
     full_messages = [{"role": "system", "content": system_prompt}, *messages]
     if modes.get("web") and not web_results:
         prefix = WEB_EMPTY_PREFIX
@@ -427,9 +435,9 @@ def run_chat(
         prefix = ""
 
     answer_options = (
-        {**ANSWER_OPTIONS, "num_predict": num_predict}
+        {**ANSWER_OPTIONS, "temperature": temperature, "num_ctx": num_ctx, "num_predict": num_predict}
         if num_predict is not None
-        else None
+        else {"temperature": temperature, "num_ctx": num_ctx}
     )
 
     if modes.get("deep_think"):
@@ -441,6 +449,9 @@ def run_chat(
             prefix=prefix,
             thinking_parts=thinking_parts,
             num_predict=num_predict,
+            options={"temperature": temperature, "num_ctx": num_ctx},
+            keep_alive=keep_alive,
+            usage=usage,
         )
     else:
         emit({"type": "chat_step", "id": req_id, "step": "drafting"})
@@ -453,6 +464,8 @@ def run_chat(
             prefix=prefix,
             thinking_parts=thinking_parts,
             options=answer_options,
+            keep_alive=keep_alive,
+            usage=usage,
         )
 
     return {
@@ -465,4 +478,5 @@ def run_chat(
         "web_used": bool(web_results),
         "thinking": "".join(thinking_parts),
         "generated_file_path": None,
+        "usage": usage,
     }
