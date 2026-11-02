@@ -83,6 +83,8 @@ This app would not be possible without the incredible open-source community. Spe
 
 ## Getting Started
 
+See the [V1.1 release notes](docs/RELEASE_NOTES.md) for the latest features, fixes, and installation notes.
+
 1. Download the latest Nogic `.exe` installer from the [GitHub Releases](https://github.com/nogic-app/nogic/releases) page.
 2. Install [Ollama](https://ollama.com/download/windows) and download a model, for example:
 
