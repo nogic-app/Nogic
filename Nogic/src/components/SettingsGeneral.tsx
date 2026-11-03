@@ -149,12 +149,12 @@ export function SettingsGeneral() {
         </div>
       </Section>
 
-      <Section title="AI Persona">
+      <Section title={t("settings.aiPersona")}>
         <label
           htmlFor="settings-persona"
           className="sr-only"
         >
-          AI Persona
+          {t("settings.aiPersona")}
         </label>
         <textarea
           id="settings-persona"

@@ -1,6 +1,8 @@
 import { useSettings } from "@/contexts/SettingsContext.tsx";
+import { useTranslation } from "react-i18next";
 
 export function ModelBehaviorSettings() {
+  const { t } = useTranslation();
   const {
     temperature,
     contextWindow,
@@ -13,7 +15,7 @@ export function ModelBehaviorSettings() {
   return (
     <section>
       <h3 className="text-sec font-medium text-[var(--text-primary)]">
-        Model Behavior
+        {t("settings.modelBehavior")}
       </h3>
       <div className="mt-2 divide-y divide-[var(--border)] border-y border-[var(--border)]">
         <div className="py-3">
@@ -22,7 +24,7 @@ export function ModelBehaviorSettings() {
               htmlFor="settings-temperature"
               className="text-sec font-medium text-[var(--text-primary)]"
             >
-              Temperature
+              {t("settings.temperature")}
             </label>
             <output
               htmlFor="settings-temperature"
@@ -50,7 +52,7 @@ export function ModelBehaviorSettings() {
             htmlFor="settings-context-window"
             className="text-sec font-medium text-[var(--text-primary)]"
           >
-            Context Window
+            {t("settings.contextWindow")}
           </label>
           <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
             Larger context remembers more of the chat, but uses more VRAM.
@@ -73,7 +75,7 @@ export function ModelBehaviorSettings() {
             htmlFor="settings-model-keep-alive"
             className="text-sec font-medium text-[var(--text-primary)]"
           >
-            Keep model in memory
+            {t("settings.keepModelInMemory")}
           </label>
           <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
             Keeping the model loaded uses VRAM but makes responses instant.

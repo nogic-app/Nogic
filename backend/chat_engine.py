@@ -24,7 +24,8 @@ ANSWER_OPTIONS = {"num_predict": 1024, "temperature": 0.1}
 DEEP_THINK_OPTIONS = {"num_predict": 2048, "temperature": 0.2}
 MAX_HELPER_CHARS = 2000
 CRASH_NOTICE = "\n[Model crashed due to memory limits. Try switching to Fast mode.]"
-TITLE_OPTIONS = {"num_predict": 10, "temperature": 0.1, "num_ctx": 512}
+TITLE_OPTIONS = {"num_predict": 10, "temperature": 0.0, "num_ctx": 512}
+TITLE_TIMEOUT_SECONDS = 10
 
 
 def _log(message: str) -> None:
@@ -47,7 +48,11 @@ def _title_from_response(response: Any) -> str | None:
     title = raw_title.strip().strip("\"'")
     title = title.replace("\"", "").replace("'", "")
     title = re.sub(r"^(?:Title|Chat title)\s*:\s*", "", title, flags=re.IGNORECASE)
-    title = " ".join(title.split())
+    words = title.split()
+    if len(words) > 6:
+        title = " ".join(words[:4])
+    else:
+        title = " ".join(words)
     if not title or "error" in title.lower():
         return None
     return title[:50]
@@ -62,13 +67,14 @@ def generate_title_async(
     """Generate an isolated title after Ollama releases the chat context."""
     time.sleep(0.5)
     prompt = (
-        "Create a concise title for a chat that starts with this question. "
-        "Output ONLY the title, no quotes: "
-        f"{user_prompt}"
+        "Create a short, 2-4 word title for a chat that starts with this question. "
+        "Output ONLY the title text, no quotes, no punctuation, no explanations. "
+        f"Question: {user_prompt}"
     )
     new_title = _fallback_title(user_prompt)
     try:
-        response = ollama.generate(
+        title_client = ollama.Client(timeout=TITLE_TIMEOUT_SECONDS)
+        response = title_client.generate(
             model=model,
             prompt=prompt,
             options=TITLE_OPTIONS,

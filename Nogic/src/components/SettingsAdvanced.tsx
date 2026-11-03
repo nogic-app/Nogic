@@ -74,7 +74,7 @@ export function SettingsAdvanced() {
 
       <section>
         <h3 className="text-title font-medium text-[var(--text-primary)]">
-          Law library
+          {t("settings.lawLibrary")}
         </h3>
         <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
           Remove all indexed articles and uploaded law PDFs.
