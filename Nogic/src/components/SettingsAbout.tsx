@@ -1,26 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
-import { ArrowUpRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowUpRight, CircleHelp } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { Button } from "./ui/button.tsx";
 import { useTranslation } from "react-i18next";
 import { resolveResource } from "@tauri-apps/api/path";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { isRecord } from "@/sidecarRequest.ts";
 import { collectDiagnostics } from "@/diagnostics.ts";
+import { HelpModal } from "./HelpModal.tsx";
+import { SettingsAboutUpdates } from "./SettingsAboutUpdates.tsx";
 
 const ISSUES_URL = "https://github.com/nogic-app/nogic/issues";
 const REPORT_URL_PREFIX = `${ISSUES_URL}/new?body=`;
 const MAX_DIAGNOSTICS_CHARS = 4000;
 const MAX_REPORT_URL_LENGTH = 8000;
-const LATEST_RELEASE_URL =
-  "https://api.github.com/repos/nogic-app/nogic/releases/latest";
-
-interface LatestRelease {
-  tag_name: string;
-  html_url: string;
-}
-
 interface AboutLink {
   key: string;
   /** Bundled documentation file, resolved from the app resources. */
@@ -38,56 +31,25 @@ const LINKS: AboutLink[] = [
 
 export function SettingsAbout({ onOpenChangelog }: { onOpenChangelog?: () => void }) {
   const { t } = useTranslation();
-  const [appVersion, setAppVersion] = useState("1.1.0");
-  const [latestRelease, setLatestRelease] = useState<LatestRelease | null>(null);
-  const [checking, setChecking] = useState(true);
+  const [appVersion, setAppVersion] = useState("1.2.0");
+  const [helpOpen, setHelpOpen] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const checkLatestRelease = useCallback(async () => {
-    setChecking(true);
-    setLatestRelease(null);
-    try {
-      const [version, response] = await Promise.all([
-        getVersion(),
-        fetch(LATEST_RELEASE_URL, {
-          headers: { Accept: "application/vnd.github+json" },
-          cache: "no-store",
-        }),
-      ]);
-      setAppVersion(version);
-      if (!response.ok) {
-        throw new Error(`GitHub returned HTTP ${response.status}.`);
-      }
-
-      const payload: unknown = await response.json();
-      if (
-        !isRecord(payload) ||
-        typeof payload.tag_name !== "string" ||
-        typeof payload.html_url !== "string"
-      ) {
-        throw new Error("GitHub returned an invalid latest-release response.");
-      }
-      if (isNewerVersion(payload.tag_name, version)) {
-        const releaseUrl = new URL(payload.html_url);
-        if (releaseUrl.origin !== "https://github.com") {
-          throw new Error("GitHub returned an invalid release URL.");
-        }
-        setLatestRelease({
-          tag_name: payload.tag_name,
-          html_url: releaseUrl.toString(),
-        });
-      }
-    } catch (error) {
-      console.error("Could not check for Nogic updates.", error);
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void checkLatestRelease();
-  }, [checkLatestRelease]);
+    let cancelled = false;
+    void getVersion()
+      .then((version) => {
+        if (!cancelled) setAppVersion(version);
+      })
+      .catch((error: unknown) => {
+        console.error("Could not read the Nogic app version.", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openAboutLink = async (link: AboutLink) => {
     setLinkError(null);
@@ -145,65 +107,47 @@ export function SettingsAbout({ onOpenChangelog }: { onOpenChangelog?: () => voi
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <img
-          src="/logo.png"
-          alt=""
-          aria-hidden="true"
-          className="h-12 w-12 rounded-lg object-contain mix-blend-multiply"
-        />
-        <div>
-          <p className="text-title font-medium text-[var(--text-primary)]">
-            Nogic
-          </p>
-          <p className="text-meta text-[var(--text-secondary)]">
-            <span>Version {appVersion}</span>
-            <span aria-hidden="true"> · </span>
-            <button type="button" onClick={onOpenChangelog} className="text-[var(--accent)] underline underline-offset-2">
-              What's new?
-            </button>
-          </p>
+    <div className="max-w-2xl w-full flex flex-col gap-6">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <img
+            src="/logo.png"
+            alt=""
+            aria-hidden="true"
+            className="h-12 w-12 rounded-lg object-contain mix-blend-multiply"
+          />
+          <div>
+            <p className="text-title font-medium text-[var(--text-primary)]">
+              Nogic
+            </p>
+            <p className="text-meta text-[var(--text-secondary)]">
+              <span>Version {appVersion}</span>
+              <span aria-hidden="true"> · </span>
+              <button type="button" onClick={onOpenChangelog} className="text-[var(--accent)] underline underline-offset-2">
+                What's new?
+              </button>
+            </p>
+          </div>
         </div>
+        <Button
+          variant="outline"
+          onClick={() => setHelpOpen(true)}
+          className="inline-flex items-center gap-2"
+        >
+          <CircleHelp size={16} aria-hidden="true" />
+          {t("settings.help")}
+        </Button>
       </div>
 
       <p className="max-w-[52ch] text-sec text-[var(--text-secondary)]">
         {t("settings.aboutDescription")}
       </p>
 
-      <div className="border-t border-[var(--border)] pt-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="outline"
-            disabled={checking}
-            onClick={() => void checkLatestRelease()}
-          >
-            {checking ? t("settings.checkingUpdates") : t("settings.checkForUpdates")}
-          </Button>
-          <p aria-live="polite" className="text-meta text-[var(--text-secondary)]">
-            {checking ? (
-              t("settings.checkingUpdates")
-            ) : latestRelease ? (
-              <button
-                type="button"
-                onClick={() => void openUrl(latestRelease.html_url).catch((error: unknown) => {
-                  console.error("Could not open the latest Nogic release.", error);
-                  setLinkError(t("settings.openFailed"));
-                })}
-                className="text-[var(--accent)] underline underline-offset-2"
-              >
-                {t("settings.newUpdateAvailable")}
-              </button>
-            ) : (
-              t("settings.upToDate")
-            )}
-          </p>
-        </div>
-      </div>
+      <SettingsAboutUpdates />
 
-      <ul className="divide-y divide-[var(--border)] border-y border-[var(--border)]">
+      <ul className="w-full divide-y divide-[var(--border)] border-y border-[var(--border)]">
         {LINKS.map((link) => (
-          <li key={link.key}>
+          <li key={link.key} className="w-full">
             <button
               type="button"
               onClick={() => void openAboutLink(link)}
@@ -230,26 +174,11 @@ export function SettingsAbout({ onOpenChangelog }: { onOpenChangelog?: () => voi
         </p>
       )}
 
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+
       <p className="text-meta text-[var(--text-tertiary)]">
         {t("settings.copyright")}
       </p>
     </div>
   );
-}
-
-function isNewerVersion(candidate: string, current: string): boolean {
-  const parse = (version: string): number[] | null => {
-    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/i);
-    return match ? match.slice(1, 4).map(Number) : null;
-  };
-  const candidateParts = parse(candidate);
-  const currentParts = parse(current);
-  if (!candidateParts || !currentParts) return false;
-
-  for (let index = 0; index < candidateParts.length; index += 1) {
-    if (candidateParts[index] !== currentParts[index]) {
-      return candidateParts[index] > currentParts[index];
-    }
-  }
-  return false;
 }

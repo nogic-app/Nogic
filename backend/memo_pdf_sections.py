@@ -16,6 +16,8 @@ from memo_content import (
     source_items,
     split_site_notes,
 )
+from memo_pdf_components import CheckboxParagraph
+from memo_templates import MEMO_TEMPLATES, get_template_type
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.units import mm
@@ -115,14 +117,33 @@ def append_memo_sections(
     clean_markdown: Callable[[str], str],
     fix_arabic: Callable[[str], str],
     site_map_path: str | None = None,
+    template_type: str = "default",
 ) -> None:
-    for heading, items in memo_sections(messages):
-        if heading != "Site Context":
+    template_type = get_template_type(template_type)
+    template = MEMO_TEMPLATES[template_type]
+    section_items = dict(memo_sections(messages))
+    for heading in template.section_order:
+        items = section_items.get(heading)
+        if items is None:
+            continue
+        if heading != "Site Context" or template_type != "default":
             story.append(paragraph(heading, styles["section"]))
         if heading == "Legal Constraints":
             legal_items = legal_constraint_items(messages)
             if not legal_items:
                 story.append(paragraph(EMPTY_SECTION, styles["empty"]))
+                continue
+            if template.checklist:
+                checklist_style = styles["legal"].clone(
+                    "ChecklistLegal", spaceAfter=5
+                )
+                for law, jurisdiction in legal_items:
+                    story.append(
+                        CheckboxParagraph(
+                            f"{escape(law)} — {escape(jurisdiction)}",
+                            checklist_style,
+                        )
+                    )
                 continue
             rows = [
                 [

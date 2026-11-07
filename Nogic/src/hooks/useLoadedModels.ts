@@ -24,11 +24,15 @@ export function useLoadedModels(intervalMs = 5000) {
           "get_loaded_models",
           {},
           isStringList,
-          8000,
+          15000,
         );
         if (!cancelled) setLoadedModels(models);
       } catch (error) {
         if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("did not answer") || /timeout/i.test(message)) {
+          return;
+        }
         console.error("Could not read the loaded Ollama models.", error);
         setLoadedModels(null);
       }

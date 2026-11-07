@@ -12,8 +12,9 @@ from xml.sax.saxutils import escape
 
 _ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!>~|])")
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
-_BULLET_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
+_BULLET_RE = re.compile(r"^\s*[-*+\u2022]\s+(.*)$")
 _ORDERED_RE = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")
+_CHECKBOX_RE = re.compile(r"^\s*(?:[-*+]\s*)?\[(?P<checked>[ xX]?)\]\s*(.*)$")
 _HR_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
 _QUOTE_RE = re.compile(r"^\s*>\s?(.*)$")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
@@ -23,7 +24,13 @@ _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 def _normalize_markdown(text: str) -> str:
     """Normalize line endings and drop backslash escapes (``\\(``, ``\\*``)."""
     normalized = str(text).replace("\r\n", "\n").replace("\r", "\n")
-    return _ESCAPE_RE.sub(r"\1", normalized)
+    normalized = _ESCAPE_RE.sub(r"\1", normalized)
+    normalized = re.sub(
+        r"(?<=\S)\s*(?=[-*+\u2022]\s+(?:\[[ xX]\]\s*)?\S)",
+        "\n",
+        normalized,
+    )
+    return re.sub(r"\[(\d+\.)", r"\1", normalized)
 
 
 def _markdown_lines(text: str) -> list[tuple[str, bool]]:
@@ -43,6 +50,11 @@ def _markdown_lines(text: str) -> list[tuple[str, bool]]:
         heading = _HEADING_RE.match(line)
         if heading:
             lines.append((heading.group(1), True))
+            continue
+        checkbox = _CHECKBOX_RE.match(line)
+        if checkbox:
+            marker = "\u2611" if checkbox.group("checked").strip() else "\u2610"
+            lines.append((f"{marker} {checkbox.group(2)}", False))
             continue
         bullet = _BULLET_RE.match(line)
         if bullet:
@@ -78,6 +90,8 @@ def _pdf_inline(text: str) -> str:
     text = _LINK_RE.sub(link, text)
     text = re.sub(r"\*\*\*(.+?)\*\*\*", r"<b><i>\1</i></b>", text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"\*\*(.+)$", r"<b>\1</b>", text)
+    text = re.sub(r"\\?\*\\?\*", "", text)
     text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
     text = re.sub(r"(?<![\w])__(.+?)__(?![\w])", r"<b>\1</b>", text)
     text = re.sub(r"(?<![\w])_(.+?)_(?![\w])", r"<i>\1</i>", text)
@@ -98,6 +112,9 @@ def clean_markdown(text: str) -> str:
     blocks: list[str] = []
     for line, is_heading in _markdown_lines(text):
         safe = _pdf_inline(escape(line))
+        safe = re.sub(r"\\?\*", "", safe)
+        if line.startswith("\u2022 "):
+            safe = f"&#160;&#160;{safe}"
         if is_heading and safe.strip():
             safe = f"<b>{safe}</b>"
         blocks.append(safe)

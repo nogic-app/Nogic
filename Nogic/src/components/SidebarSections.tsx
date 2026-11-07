@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 import { Num } from "./Citation.tsx";
 import type { ChatExportFormat } from "./sidebarChatExport.ts";
-import type { ChatItem, ProjectItem } from "../sidebarData.ts";
+import type {
+  ChatItem,
+  MessageSearchResult,
+  ProjectItem,
+} from "../sidebarData.ts";
 import { useTranslation } from "react-i18next";
 import { RenameModal } from "./RenameModal.tsx";
 
@@ -39,6 +43,9 @@ interface SidebarSectionsProps {
   onToggleChatSearch: () => void;
   onCloseChatSearch: () => void;
   onChatSearchChange: (value: string) => void;
+  messageSearchResults: MessageSearchResult[] | null;
+  messageSearchFailed: boolean;
+  onSelectMessageSearchResult: (result: MessageSearchResult) => void;
   hidden: boolean;
 }
 
@@ -64,6 +71,9 @@ export function SidebarSections({
   onToggleChatSearch,
   onCloseChatSearch,
   onChatSearchChange,
+  messageSearchResults,
+  messageSearchFailed,
+  onSelectMessageSearchResult,
   hidden,
 }: SidebarSectionsProps) {
   const [areChatsExpanded, setAreChatsExpanded] = useState(true);
@@ -97,8 +107,9 @@ export function SidebarSections({
   const closeShareMenu = (chatId: string) => {
     setOpenShareChatId((current) => (current === chatId ? null : current));
   };
+  const searchQuery = chatSearch.trim();
   const visibleChats = chats.filter((chat) =>
-    chat.title.toLocaleLowerCase().includes(chatSearch.trim().toLocaleLowerCase()),
+    chat.title.toLocaleLowerCase().includes(searchQuery.toLocaleLowerCase()),
   );
 
   return (
@@ -159,17 +170,53 @@ export function SidebarSections({
             />
           </div>
         )}
-        <ul
-          id="sidebar-chats-list"
-          hidden={!areChatsExpanded}
-          className="space-y-0.5"
-          onClick={onCloseChatSearch}
-        >
-          {visibleChats.length === 0 ? (
-            <li className="px-3 py-2 text-meta text-tertiary">
-              {chats.length === 0 ? t("sidebar.noChats") : "No matching chats"}
-            </li>
-          ) : visibleChats.map((chat) => (
+        {isChatSearchOpen && searchQuery ? (
+          searchQuery.length < 2 || messageSearchFailed ? null : (
+            <ul
+              id="sidebar-message-search-results"
+              hidden={!areChatsExpanded}
+              className="space-y-0.5"
+              onClick={onCloseChatSearch}
+            >
+              {messageSearchResults === null ? (
+                <li className="px-3 py-2 text-meta text-[var(--text-secondary)]">
+                  Searching messages...
+                </li>
+              ) : messageSearchResults.length === 0 ? (
+                <li className="px-3 py-2 text-meta text-[var(--text-secondary)]">
+                  No matches found.
+                </li>
+              ) : messageSearchResults.map((result, index) => (
+                <li key={`${result.chat_id}:${index}`}>
+                  <button
+                    type="button"
+                    className="sidebar-list-item w-full rounded-md px-3 py-2 text-start hover:bg-[var(--bg-muted)]"
+                    onClick={() => onSelectMessageSearchResult(result)}
+                  >
+                    <span className="block truncate text-[var(--text-primary)] font-semibold">
+                      {result.chat_title}
+                    </span>
+                    <span
+                      className="block text-meta text-[var(--text-secondary)] [&_b]:font-semibold [&_b]:text-[var(--text-primary)]"
+                      dangerouslySetInnerHTML={{ __html: result.snippet }}
+                    />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : (
+          <ul
+            id="sidebar-chats-list"
+            hidden={!areChatsExpanded}
+            className="space-y-0.5"
+            onClick={onCloseChatSearch}
+          >
+            {visibleChats.length === 0 ? (
+              <li className="px-3 py-2 text-meta text-tertiary">
+                {chats.length === 0 ? t("sidebar.noChats") : "No matching chats"}
+              </li>
+            ) : visibleChats.map((chat) => (
             <li key={chat.id} className="group relative">
               <button
                 type="button"
@@ -310,8 +357,9 @@ export function SidebarSections({
                 </div>
               )}
             </li>
-          ))}
-        </ul>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section aria-labelledby="sidebar-projects-heading">

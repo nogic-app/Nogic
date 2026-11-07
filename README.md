@@ -36,21 +36,21 @@ Nogic is a local-first AI colleague for landscape architecture. It runs entirely
 
 ![Nogic site map powered by OpenStreetMap](docs/screenshots/06-site-map.png)
 
-### V1.1 usage dashboard
+### V1.2 usage dashboard
 
-![Nogic usage dashboard](docs/screenshots/v1.1-usage.png)
+![Nogic usage dashboard](docs/screenshots/v1.2-usage.png)
 
-### V1.1 plant comparison
+### V1.2 plant comparison
 
-![Nogic side-by-side plant comparison](docs/screenshots/v1.1-compare.png)
+![Nogic side-by-side plant comparison](docs/screenshots/v1.2-compare.png)
 
-### V1.1 model settings
+### V1.2 model settings
 
-![Nogic model behavior settings](docs/screenshots/v1.1-models.png)
+![Nogic model behavior settings](docs/screenshots/v1.2-models.png)
 
-### V1.1 clear context
+### V1.2 clear context
 
-![Nogic clear context control](docs/screenshots/v1.1-clear-context.png)
+![Nogic clear context control](docs/screenshots/v1.2-clear-context.png)
 
 ## Key Features
 
@@ -61,6 +61,10 @@ Nogic is a local-first AI colleague for landscape architecture. It runs entirely
 - **Multi-language** : UI support for EN, FR, AR (RTL), ES, and PT.
 - **Total AI Control** : VRAM management (`keep_alive`), temperature sliders, context window sizing, and custom personas.
 - **Advanced UX** : AI-generated chat titles, clear context (eraser), deterministic plant comparisons, and token usage indicators.
+- **Message Branching**: Edit and regenerate messages without losing history.
+- **Prompt Library**: Automatically saves your most-used prompts.
+- **Native PDF Viewer**: Opens citations directly at the cited page inside the app.
+- **Web Fallback**: Honest, unverified web search when local data is missing.
 
 ## Why Nogic? (Built on Honesty)
 
@@ -83,7 +87,7 @@ This app would not be possible without the incredible open-source community. Spe
 
 ## Getting Started
 
-See the [V1.1 release notes](docs/RELEASE_NOTES.md) for the latest features, fixes, and installation notes.
+See the [V1.2 release notes](docs/RELEASE_NOTES.md) for the latest features, fixes, and installation notes.
 
 1. Download the latest Nogic `.exe` installer from the [GitHub Releases](https://github.com/nogic-app/nogic/releases) page.
 2. Install [Ollama](https://ollama.com/download/windows) and download a model, for example:

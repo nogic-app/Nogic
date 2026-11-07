@@ -1,17 +1,5 @@
 [
   {
-    "id": "pl_01",
-    "latin_name": "Rosmarinus officinalis",
-    "common_name": "Romarin",
-    "water_need": "low",
-    "sun_exposure": "full",
-    "source_url": "https://plants.ces.ncsu.edu/plants/salvia-rosmarinus/",
-    "source_quote": "Previously known as: Rosmarinus officinalis. Rosemary does best in light, slightly acidic, dry to medium, well-drained soils in full sun. It tolerates drought, partial shade, salt, heavy pruning, and most soil types except clay.",
-    "verified": true,
-    "common_name_ar": "إكليل الجبل",
-    "native_to_morocco": true
-  },
-  {
     "id": "pl_02",
     "latin_name": "Lavandula stoechas",
     "common_name": "Lavande papillon",

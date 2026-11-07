@@ -1,13 +1,14 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { listenSidecar as listen } from "@/sidecarEvents.ts";
-import {
-  handleChatStreamEvent,
-  updateAssistantMessage,
-} from "@/chatStreamEvents.ts";
+import { updateAssistantMessage } from "@/chatStreamEvents.ts";
+import { mergeStreamMessage, remapChatStream } from "@/chatStreamCache.ts";
+import { dispatchChatStreamEvent } from "@/chatStreamDispatcher.ts";
 import type { ChatItem } from "@/components/Sidebar.tsx";
 import {
   isChatMessageArray,
   isRecord,
+  latestMessageId,
   toHistoryMessages,
   type ChatMessage,
 } from "@/WorkspaceContent.tsx";
@@ -15,6 +16,7 @@ import { isTauriCallbackIdError } from "@/sidecarRequest.ts";
 import { isPlantDataArray } from "@/plants.ts";
 import type { ErrorPayload } from "@/types/errors.ts";
 import { isTokenUsage, type TokenUsage } from "@/types/tokenUsage.ts";
+import type { FileAttachment } from "@/components/FilePill.tsx";
 
 export interface PythonMessageRefs {
   activeRequestId: RefObject<string | null>;
@@ -22,11 +24,23 @@ export interface PythonMessageRefs {
   plantLookupRequestId: RefObject<string | null>;
   remappedChatId: RefObject<string | null>;
   activeChatId: RefObject<string | null>;
+  activeStreamsRef: RefObject<
+    Record<string, { message: ChatMessage; requestId: string }>
+  >;
+  draftsRef: RefObject<
+    Record<string, { text: string; attachments: FileAttachment[] }>
+  >;
   chatCache: RefObject<Record<string, ChatMessage[]>>;
+  mutationRollback: RefObject<(() => void) | null>;
+  pendingRegeneration: RefObject<{
+    requestId: string;
+    parentId: string | null;
+  } | null>;
 }
 
 interface PythonMessageSetters {
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  setActiveLeafId: Dispatch<SetStateAction<string | null>>;
   setIsStreaming: Dispatch<SetStateAction<boolean>>;
   setActiveChat: Dispatch<SetStateAction<ChatItem | null>>;
   setErrorPayload: Dispatch<SetStateAction<ErrorPayload | null>>;
@@ -43,10 +57,15 @@ export function usePythonMessages(
     plantLookupRequestId,
     remappedChatId,
     activeChatId,
+    activeStreamsRef,
+    draftsRef,
     chatCache,
+    mutationRollback,
+    pendingRegeneration,
   } = refs;
   const {
     setMessages,
+    setActiveLeafId,
     setIsStreaming,
     setActiveChat,
     setErrorPayload,
@@ -83,10 +102,18 @@ export function usePythonMessages(
             }
             const temporaryChatId = payload.old_id;
             const updatedChatId = payload.new_id;
+            remapChatStream(
+              temporaryChatId,
+              updatedChatId,
+              activeStreamsRef,
+              chatCache,
+            );
             if (activeChatId.current === temporaryChatId) {
               remappedChatId.current = updatedChatId;
               historyRequestId.current = null;
               activeChatId.current = updatedChatId;
+              activeRequestId.current =
+                activeStreamsRef.current[updatedChatId]?.requestId ?? null;
               setActiveChat((current) =>
                 current?.id === temporaryChatId
                   ? { ...current, id: updatedChatId }
@@ -137,8 +164,32 @@ export function usePythonMessages(
             }
             const messages = toHistoryMessages(payload.data);
             const chatId = activeChatId.current;
-            if (chatId) chatCache.current[chatId] = messages;
-            setMessages(messages);
+            const activeStream = chatId
+              ? activeStreamsRef.current[chatId]
+              : undefined;
+            const restoredMessages = activeStream
+              ? mergeStreamMessage(
+                  messages,
+                  activeStream.requestId,
+                  activeStream.message,
+                )
+              : messages;
+            if (chatId) chatCache.current[chatId] = restoredMessages;
+            setMessages(restoredMessages);
+            setActiveLeafId((current) => {
+              if (activeStream) return activeStream.requestId;
+              if (
+                current &&
+                restoredMessages.some(
+                  (message) =>
+                    message.id === current || message.persistedId === current,
+                )
+              ) {
+                return current;
+              }
+              return latestMessageId(restoredMessages);
+            });
+            historyRequestId.current = null;
             return;
           }
 
@@ -186,22 +237,25 @@ export function usePythonMessages(
             return;
           }
 
-          if (requestId === null || requestId !== activeRequestId.current) return;
-
-          if (payload.type === "chat_done") {
-            if (isTokenUsage(payload.usage)) {
-              setLastTokenUsage(payload.usage);
-            } else if (payload.usage !== undefined) {
-              console.error("Received invalid token usage from the Python sidecar.", payload);
-            }
-          }
-
-          handleChatStreamEvent(
+          dispatchChatStreamEvent(
             payload,
-            activeRequestId,
-            setIsStreaming,
-            setMessages,
-            setErrorPayload,
+            {
+              activeRequestId,
+              activeChatId,
+              activeStreamsRef,
+              historyRequestId,
+              draftsRef,
+              chatCache,
+              mutationRollback,
+              pendingRegeneration,
+            },
+            {
+              setMessages,
+              setActiveLeafId,
+              setIsStreaming,
+              setErrorPayload,
+              setLastTokenUsage,
+            },
           );
         });
 
@@ -227,13 +281,17 @@ export function usePythonMessages(
     };
   }, [
     activeChatId,
+    activeStreamsRef,
     activeRequestId,
     historyRequestId,
     plantLookupRequestId,
     remappedChatId,
     setActiveChat,
+    draftsRef,
     setErrorPayload,
     chatCache,
+    mutationRollback,
+    pendingRegeneration,
     setMessages,
     setIsStreaming,
   ]);

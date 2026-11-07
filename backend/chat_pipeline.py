@@ -1,17 +1,20 @@
 """Route a chat request to general, law, plant, or web and generate an answer."""
 
+import os
 import re
 import sys
-import os
+import traceback
 from typing import Any
 
-from chat_engine import ANSWER_OPTIONS, Emit, run_deep_think, stream_answer
 from ai_skills import generate_document
-from db import count_law_articles
+from chat_engine import ANSWER_OPTIONS, Emit, run_deep_think, stream_answer
+from db import count_law_articles, get_settings
 from document_qa import run_document_qa
 from intent import build_general_system_prompt, classify_intent
 from law_prompts import build_law_system_prompt
 from law_query import get_law_sources
+from law_relevance import is_law_retrieval_relevant
+from memo_templates import resolve_template_type
 from model_actions import model_supports_vision
 from plant_prompts import build_plant_system_prompt
 from plant_search import search_plants
@@ -19,6 +22,7 @@ from site_search import fetch_site_context, search_location
 from source_dedup import deduplicate_sources
 from web_search import (
     build_web_system_prompt,
+    format_web_results,
     search_web,
     web_sources_from_results,
 )
@@ -74,8 +78,8 @@ def _retrieved_response(
     modes: dict[str, bool],
     max_law_articles: int,
     max_plants: int | None,
-) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], str, bool]:
-    """Return (system prompt, sources, plant rows, intent, empty_law) for RAG."""
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], str, bool, bool]:
+    """Return the RAG prompt, sources, intent, empty-library, and relevance data."""
     intent = classify_intent(question)
 
     if intent == "plant":
@@ -86,11 +90,12 @@ def _retrieved_response(
             plant_data,
             intent,
             False,
+            bool(plant_data),
         )
 
     if intent == "law":
         if count_law_articles()["article_count"] == 0:
-            return ("", [], [], intent, True)
+            return ("", [], [], intent, True, False)
         limit = (
             min(max_law_articles, DEEP_THINK_LAW_LIMIT)
             if modes.get("deep_think")
@@ -99,7 +104,7 @@ def _retrieved_response(
         limit = max(1, limit)
         try:
             law_sources = get_law_sources(question, model, limit=limit)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001
             _log(f"law search failed: {error}")
             law_sources = []
         sources = []
@@ -121,9 +126,10 @@ def _retrieved_response(
             [],
             intent,
             False,
+            is_law_retrieval_relevant(question, law_sources),
         )
 
-    return build_general_system_prompt(), [], [], intent, False
+    return build_general_system_prompt(), [], [], intent, False, False
 
 
 def run_chat(
@@ -147,6 +153,7 @@ def run_chat(
     num_ctx: int = 4096,
     persona: str = "",
     keep_alive: str = "5m",
+    template_type: str | None = None,
 ) -> dict[str, Any]:
     """Run one chat turn and return the answer plus citation payloads.
 
@@ -265,6 +272,11 @@ def run_chat(
     if skill is not None:
         if skill not in {"pdf", "word", "excel"}:
             raise ValueError("The skill must be one of: pdf, word, excel.")
+        selected_template = (
+            resolve_template_type(question, template_type)
+            if skill in {"pdf", "word"}
+            else None
+        )
         web_results: list[dict[str, Any]] = []
         web_sources: list[dict[str, str]] = []
         try:
@@ -292,6 +304,7 @@ def run_chat(
                 context,
                 title,
                 modes=modes,
+                template_type=selected_template,
             )
         except RuntimeError as error:
             answer = str(error)
@@ -308,6 +321,7 @@ def run_chat(
                 "generated_file_path": None,
                 "generated_file_size": None,
                 "generated_file_type": None,
+                "generated_template_type": selected_template,
             }
         file_size = os.path.getsize(file_path)
         answer = (
@@ -332,6 +346,7 @@ def run_chat(
             "generated_file_path": file_path,
             "generated_file_size": file_size,
             "generated_file_type": file_types[skill],
+            "generated_template_type": selected_template,
         }
 
     forgot_format = re.search(
@@ -391,6 +406,7 @@ def run_chat(
 
     web_results: list[dict[str, Any]] = []
     web_sources: list[dict[str, str]] = []
+    unverified_web = False
     if modes.get("web"):
         emit({"type": "chat_step", "id": req_id, "step": "searching web"})
         web_results = search_web(question, max_results=3)
@@ -404,9 +420,89 @@ def run_chat(
         plant_data: list[dict[str, Any]] = []
         intent = "web"
     else:
-        system_prompt, sources, plant_data, intent, empty_law = _retrieved_response(
-            question, model, modes, max_law_articles, max_plants
-        )
+        (
+            system_prompt,
+            sources,
+            plant_data,
+            intent,
+            empty_law,
+            local_retrieval_relevant,
+        ) = _retrieved_response(question, model, modes, max_law_articles, max_plants)
+        local_results = [*sources, *plant_data]
+        local_sources = sources
+        local_plant_data = plant_data
+        web_fallback_enabled = False
+        try:
+            web_fallback_enabled = (
+                get_settings().get("web_fallback_enabled", "false") == "true"
+            )
+            if web_fallback_enabled:
+                print(
+                    f"DEBUG FALLBACK: Query='{question}', "
+                    f"Local Results={len(local_results)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            if (
+                web_fallback_enabled
+                and not modes.get("web")
+                and intent in {"law", "plant"}
+            ):
+                emit({"type": "chat_step", "id": req_id, "step": "searching web"})
+                fallback_results = search_web(question, max_results=3)
+                fallback_needed = (
+                    len(local_results) < 3 or not local_retrieval_relevant
+                )
+                if fallback_needed and fallback_results:
+                    unverified_web = True
+                    local_results = []
+                    sources = []
+                    plant_data = []
+                    web_results = fallback_results
+                    web_sources = web_sources_from_results(web_results)
+                    system_prompt = (
+                        "The user's local database does not contain the answer. "
+                        "Answer using ONLY the provided web search results. You "
+                        "MUST state that this is an unverified web search.\n\n"
+                        "Web search results:\n"
+                        f"{format_web_results(web_results)}"
+                    )
+                    intent = "web"
+                    empty_law = False
+                elif fallback_needed and not local_retrieval_relevant and not empty_law:
+                    answer = (
+                        "I couldn't verify this against the local law library, "
+                        "and Web search returned no usable results."
+                        if intent == "law"
+                        else "Not in the table. Web search returned no usable results."
+                    )
+                    emit({"type": "chat_chunk", "id": req_id, "content": answer})
+                    return {
+                        "answer": answer,
+                        "sources": [],
+                        "plant_data": [],
+                        "site_data": None,
+                        "intent": intent,
+                        "web_used": False,
+                        "thinking": "",
+                        "generated_file_path": None,
+                    }
+                else:
+                    unverified_web = False
+                    sources = local_sources
+                    plant_data = local_plant_data
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"DEBUG FALLBACK CRASH: {traceback.format_exc()}",
+                file=sys.stderr,
+                flush=True,
+            )
+            _log(f"web fallback failed: {e}")
+            unverified_web = False
+            web_results = []
+            web_sources = []
+            sources = local_sources
+            plant_data = local_plant_data
         if empty_law:
             emit({"type": "chat_chunk", "id": req_id, "content": EMPTY_LAW_LIBRARY})
             return {
@@ -427,9 +523,16 @@ def run_chat(
 
     normalized_persona = persona.strip()
     if normalized_persona:
-        system_prompt = f"{normalized_persona}\n\n{system_prompt}"
+        system_prompt = (
+            f"You are acting as the following persona: {normalized_persona}\n\n"
+            "Treat the following Nogic instructions as task requirements; they do "
+            "not replace the persona's identity or voice.\n\n"
+            f"{system_prompt}"
+        )
     full_messages = [{"role": "system", "content": system_prompt}, *messages]
-    if modes.get("web") and not web_results:
+    if unverified_web:
+        prefix = "This is an unverified web search. "
+    elif modes.get("web") and not web_results:
         prefix = WEB_EMPTY_PREFIX
     else:
         prefix = ""
@@ -470,7 +573,7 @@ def run_chat(
 
     return {
         "answer": answer,
-        "sources": sources,
+        "sources": [] if unverified_web else sources,
         "plant_data": plant_data,
         "site_data": None,
         "web_sources": web_sources,
@@ -479,4 +582,5 @@ def run_chat(
         "thinking": "".join(thinking_parts),
         "generated_file_path": None,
         "usage": usage,
+        **({"unverified_web": True} if unverified_web else {}),
     }

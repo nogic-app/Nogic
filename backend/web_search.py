@@ -1,4 +1,4 @@
-"""DuckDuckGo web search used only when the user enables Web mode.
+"""DuckDuckGo web search used only when the user opts into Web search.
 
 Primary path: the `duckduckgo_search` package. Some networks return an empty
 or irrelevant payload from its backend, so a small HTML fallback keeps Web

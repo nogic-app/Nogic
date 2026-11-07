@@ -1,55 +1,41 @@
-import { useEffect, useState } from "react";
 import type { ChatModes } from "@/chatModes.ts";
 
-const WEB_STEPS = ["searching web", "reading sources", "drafting"];
-const DEEP_THINK_STEPS = ["planning", "drafting", "critiquing", "revising"];
-const DEFAULT_STEPS = ["thinking", "drafting"];
+function formatStep(step: string): string {
+  const label = step.trim().replace(/\.{3}$/, "");
+  if (!label) return "Thinking...";
+  return `${label[0].toUpperCase()}${label.slice(1)}...`;
+}
 
 export function StreamingTicker({
   modes,
   currentStep = "",
+  isReasoningStreaming = false,
   isExtractive = false,
 }: {
   modes: ChatModes;
   currentStep?: string;
+  isReasoningStreaming?: boolean;
   isExtractive?: boolean;
 }) {
-  const steps = modes.web
-    ? WEB_STEPS
+  const initialStep = modes.web
+    ? "Searching web"
     : modes.deep_think
-      ? DEEP_THINK_STEPS
-      : DEFAULT_STEPS;
-  const [active, setActive] = useState(0);
-
-  useEffect(() => {
-    setActive(0);
-    if (currentStep) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-    const id = window.setInterval(
-      () => setActive((step) => (step + 1) % steps.length),
-      900,
-    );
-    return () => window.clearInterval(id);
-  }, [currentStep, steps]);
-
-  const displayStep = currentStep || steps[active];
+      ? "Planning"
+      : "Thinking";
+  const displayStep = isReasoningStreaming
+    ? "Reasoning..."
+    : formatStep(currentStep || initialStep);
 
   return (
-    <>
-      <p
-        aria-live="polite"
-        className="mt-3 whitespace-nowrap font-mono text-meta text-tertiary"
-        aria-label={displayStep}
-      >
-        <span className="inline-block animate-shimmer">
-          {displayStep}
-        </span>
-        {isExtractive && (
-          <span className="ml-2">
-            · Extractive mode (small model)
-          </span>
-        )}
-      </p>
-    </>
+    <p
+      aria-live="polite"
+      className="whitespace-nowrap font-mono text-meta text-tertiary"
+      aria-label={displayStep}
+    >
+      <span className="inline-block animate-shimmer">{displayStep}</span>
+      {isExtractive && (
+        <span className="ml-2">· Extractive mode (small model)</span>
+      )}
+    </p>
   );
 }

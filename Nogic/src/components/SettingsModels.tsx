@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  SettingsModelList,
-} from "./SettingsModelList.tsx";
+import { SettingsModelList } from "./SettingsModelList.tsx";
 import type { ModelOption } from "@/modelCatalog.ts";
 import { SettingsModelOverview } from "./SettingsModelOverview.tsx";
-import { parseCapabilities } from "@/modelCapabilities.ts";
 import { useSettings } from "@/contexts/SettingsContext.tsx";
 import { useHardwareInfo } from "@/hooks/useHardwareInfo";
 import { useModelRequests } from "@/hooks/useModelRequests";
 import { useTranslation } from "react-i18next";
 import { normalizeErrorPayload } from "@/types/errors.ts";
 import { ModelBehaviorSettings } from "./ModelBehaviorSettings.tsx";
+import { ModelAdvisorHero } from "./ModelAdvisorHero.tsx";
+import { MODEL_CATALOG } from "@/modelCatalog.ts";
+import { recommendModelForHardware } from "@/modelRecommendations.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -31,8 +31,11 @@ export function SettingsModels() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unloadToast, setUnloadToast] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<string[]>([]);
   const { info: hardwareInfo, loading: hardwareLoading, error: hardwareError, refresh: refreshHardware } = useHardwareInfo();
+  const recommendedModel = recommendModelForHardware(
+    MODEL_CATALOG,
+    hardwareInfo,
+  );
   const modelError = error ? normalizeErrorPayload(error) : null;
   const onConnectionError = useCallback((message: string) => {
     setStatus("offline");
@@ -123,27 +126,6 @@ export function SettingsModels() {
     if (listenerReady) void refresh();
   }, [listenerReady, refresh]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setCapabilities([]);
-    if (!listenerReady || status !== "running" || !selectedModel) {
-      return;
-    }
-    void request("get_model_capabilities", { model_name: selectedModel })
-      .then((value) => {
-        if (!cancelled) setCapabilities(parseCapabilities(value));
-      })
-      .catch((reason: unknown) => {
-        if (cancelled) return;
-        console.error("Could not read the active model capabilities.", reason);
-        setError(normalizeErrorPayload(reason).message);
-        setCapabilities([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedModel, listenerReady, request, status]);
-
   const handlePull = async (model: ModelOption) => {
     const id = `pull:${crypto.randomUUID()}`;
     pullRequestId.current = id;
@@ -233,10 +215,19 @@ export function SettingsModels() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
+      <ModelAdvisorHero
+        hardwareInfo={hardwareInfo} hardwareLoading={hardwareLoading}
+        hardwareError={hardwareError} onRefreshHardware={refreshHardware}
+        recommendedModel={recommendedModel} activeModel={selectedModel}
+        installedModels={installedModels} isRefreshing={isRefreshing}
+        onUse={setActiveModel} onPull={(model) => void handlePull(model)}
+        onCancel={() => void handleCancelPull()} pullingModel={pullingModel}
+        isCancelling={isCancelling} status={status} pullStatus={pullStatus}
+      />
+
       <SettingsModelOverview
         activeModel={selectedModel}
-        capabilities={capabilities}
         fallbackModel={fallbackModel ?? ""}
         installedModels={installedModels}
         isRefreshing={isRefreshing}
@@ -244,11 +235,7 @@ export function SettingsModels() {
         onModelChange={setActiveModel}
         onUnloadModel={() => void handleUnloadModel()}
         status={status}
-        hardwareInfo={hardwareInfo}
-        hardwareLoading={hardwareLoading}
-        hardwareError={hardwareError}
         modelError={modelError}
-        onRetryHardware={refreshHardware}
         onRetryModels={() => void refresh()}
       />
 
@@ -265,6 +252,7 @@ export function SettingsModels() {
 
       <SettingsModelList
         activeModel={selectedModel}
+        recommendedModelName={recommendedModel?.name ?? null}
         error={error}
         hardwareInfo={hardwareInfo}
         installedModels={installedModels}

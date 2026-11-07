@@ -10,13 +10,56 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Image, Paragraph, Table, TableStyle
+from reportlab.platypus import Flowable, Image, Paragraph, Table, TableStyle
 
 ACCENT = colors.HexColor("#4A6B4E")
 USER_BUBBLE = colors.HexColor("#F0F0ED")
 NOGIC_BUBBLE = colors.HexColor("#E8EDE7")
 USER_AVATAR = colors.HexColor("#F2F1EC")
 SECONDARY = colors.HexColor("#6B6B66")
+
+
+class CheckboxParagraph(Flowable):
+    """Render a vector checkbox beside a paragraph without font glyphs."""
+
+    def __init__(self, text: str, style: Any, checked: bool = False) -> None:
+        super().__init__()
+        self.paragraph = Paragraph(text, style)
+        self.checked = checked
+        self.box_size = 7
+        self.gap = 4
+        self.spaceBefore = style.spaceBefore
+        self.spaceAfter = style.spaceAfter
+
+    def wrap(
+        self,
+        available_width: float,
+        available_height: float,
+    ) -> tuple[float, float]:
+        self.paragraph.wrap(
+            available_width - self.box_size - self.gap,
+            available_height,
+        )
+        self.width = available_width
+        self.height = self.paragraph.height
+        return self.width, self.height
+
+    def draw(self) -> None:
+        self.paragraph.drawOn(self.canv, self.box_size + self.gap, 0)
+        self.canv.saveState()
+        self.canv.setStrokeColor(SECONDARY)
+        self.canv.setLineWidth(0.6)
+        y = (
+            self.height
+            - self.box_size
+            - (self.paragraph.style.leading - self.box_size) / 2
+        )
+        self.canv.rect(0, y, self.box_size, self.box_size, stroke=1, fill=0)
+        if self.checked:
+            self.canv.setLineWidth(0.9)
+            self.canv.line(1.2, y + 3.2, 2.8, y + 1.5)
+            self.canv.line(2.8, y + 1.5, 5.9, y + 5.6)
+        self.canv.restoreState()
 
 
 class NumberedCanvas(canvas.Canvas):

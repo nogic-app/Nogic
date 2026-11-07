@@ -39,6 +39,14 @@ export interface Settings {
   persona: string;
   /** Latest release notes version acknowledged by the user. */
   seen_version?: string;
+  /** Automatically save prompts repeated in recent chat history. */
+  auto_save_prompts: boolean;
+  /** Use Ollama embeddings to detect semantically similar prompts. */
+  semantic_auto_save: boolean;
+  /** Whether the user dismissed the prompt auto-save notice. */
+  seen_autosave_tip: boolean;
+  /** Allow web search when a law or plant is missing from local data. */
+  web_fallback_enabled: boolean;
 }
 
 interface SettingsContextValue extends Settings {
@@ -55,6 +63,10 @@ interface SettingsContextValue extends Settings {
   setModelKeepAlive: (modelKeepAlive: string) => void;
   setPersona: (persona: string) => void;
   setSeenVersion: (version: string) => void;
+  setAutoSavePrompts: (enabled: boolean) => void;
+  setSemanticAutoSave: (enabled: boolean) => void;
+  setSeenAutosaveTip: (seen: boolean) => void;
+  setWebFallbackEnabled: (enabled: boolean) => void;
   settingsLoaded: boolean;
 }
 
@@ -72,6 +84,10 @@ const DEFAULT_SETTINGS: Settings = {
   modelKeepAlive: "5m",
   persona: "",
   seen_version: undefined,
+  auto_save_prompts: true,
+  semantic_auto_save: false,
+  seen_autosave_tip: false,
+  web_fallback_enabled: false,
 };
 
 /** Map UI language labels to locale codes. */
@@ -146,6 +162,16 @@ function storedSettings(value: unknown): Partial<Settings> {
   if (sendWithEnter !== undefined) next.sendWithEnter = sendWithEnter;
   const enableShortcuts = booleanValue(value.enableShortcuts);
   if (enableShortcuts !== undefined) next.enableShortcuts = enableShortcuts;
+  const autoSavePrompts = booleanValue(value.auto_save_prompts);
+  if (autoSavePrompts !== undefined) next.auto_save_prompts = autoSavePrompts;
+  const semanticAutoSave = booleanValue(value.semantic_auto_save);
+  if (semanticAutoSave !== undefined) next.semantic_auto_save = semanticAutoSave;
+  const seenAutosaveTip = booleanValue(value.seen_autosave_tip);
+  if (seenAutosaveTip !== undefined) next.seen_autosave_tip = seenAutosaveTip;
+  const webFallbackEnabled = booleanValue(value.web_fallback_enabled);
+  if (webFallbackEnabled !== undefined) {
+    next.web_fallback_enabled = webFallbackEnabled;
+  }
   return next;
 }
 
@@ -263,6 +289,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         updateSetting("modelKeepAlive", modelKeepAlive),
       setPersona: (persona) => updateSetting("persona", persona),
       setSeenVersion: (version) => updateSetting("seen_version", version),
+      setAutoSavePrompts: (enabled) =>
+        updateSetting("auto_save_prompts", enabled),
+      setSemanticAutoSave: (enabled) =>
+        updateSetting("semantic_auto_save", enabled),
+      setSeenAutosaveTip: (seen) => updateSetting("seen_autosave_tip", seen),
+      setWebFallbackEnabled: (enabled) =>
+        updateSetting("web_fallback_enabled", enabled),
       settingsLoaded,
     }),
     [settings, settingsLoaded, updateSetting, updateModelSetting],

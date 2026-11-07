@@ -160,6 +160,7 @@ def _stream_call(
         message = chunk["message"]
         thinking = _message_field(message, "thinking")
         if thinking:
+            print(f"DEBUG REASONING CHUNK: {chunk}", file=sys.stderr, flush=True)
             _emit_thinking(emit, req_id, thinking)
             if thinking_parts is not None:
                 thinking_parts.append(thinking)

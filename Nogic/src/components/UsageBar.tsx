@@ -9,7 +9,7 @@ interface UsageBarProps {
 /** A quiet usage bar bound directly to a measured percentage. */
 export function UsageBar({ label, detail, percent, warning = false }: UsageBarProps) {
   return (
-    <div>
+    <div className="w-full">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sec text-[var(--text-primary)]">{label}</span>
         <span className="font-mono text-meta text-[var(--text-secondary)]">
@@ -22,7 +22,7 @@ export function UsageBar({ label, detail, percent, warning = false }: UsageBarPr
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent === null ? undefined : Math.round(percent)}
-        className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--bg-muted)]"
+        className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-muted)]"
       >
         <div
           className={`h-full rounded-full transition-[width] duration-200 ${

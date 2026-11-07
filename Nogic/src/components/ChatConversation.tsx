@@ -1,16 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
 import { useSettings } from "@/contexts/SettingsContext.tsx";
 import type { ChatModes } from "@/chatModes.ts";
 import { lawSourceLabel } from "@/lawSources.ts";
 import { toPlantCard } from "@/plants.ts";
-import { openGeneratedFilePath } from "@/generatedFile.ts";
-import { requestSidecar } from "@/sidecarRequest.ts";
-import {
-  GeneratedFileCard,
-  type GeneratedFileType,
-} from "@/components/GeneratedFileCard.tsx";
+import { ChatFileCard } from "@/components/ChatFileCard.tsx";
 import { AssistantMessage, UserMessage } from "@/components/Message.tsx";
 import { Markdown } from "@/components/Markdown.tsx";
 import { SourceFooter } from "@/components/SourceFooter.tsx";
@@ -20,70 +13,57 @@ import { PlantCard } from "@/components/PlantCard.tsx";
 import { SiteCard } from "@/components/SiteCard.tsx";
 import { WebSources } from "@/components/WebSources.tsx";
 import { FilePill } from "@/components/FilePill.tsx";
-import type { ChatMessage } from "@/WorkspaceContent.tsx";
+import {
+  latestDescendantLeafId,
+  messageNodeId,
+  messageSiblings,
+  type ChatMessage,
+} from "@/WorkspaceContent.tsx";
 import type { PlantData } from "@/plants.ts";
 import type { SkillTag } from "@/components/Composer.tsx";
+import type { MemoTemplateType } from "@/memoTemplates.ts";
+import { requestSidecar } from "@/sidecarRequest.ts";
 
-function generatedFileType(
-  filePath: string,
-  storedType?: GeneratedFileType,
-): GeneratedFileType {
-  if (storedType) return storedType;
-  const extension = filePath.split(".").pop()?.toLowerCase();
-  if (extension === "docx") return "DOCX";
-  if (extension === "xlsx") return "XLSX";
-  return "PDF";
-}
-
-function fileSkill(fileType: GeneratedFileType): SkillTag | null {
-  if (fileType === "DOCX") return "word";
-  if (fileType === "XLSX") return "excel";
-  return "pdf";
-}
-
-function typeForSkill(skill: SkillTag): GeneratedFileType {
-  if (skill === "word") return "DOCX";
-  if (skill === "excel") return "XLSX";
-  return "PDF";
-}
-
-function fileNameFromPath(filePath: string): string {
-  return filePath.split(/[\\/]/).pop() || filePath;
-}
-
-async function saveGeneratedFile(filePath: string, fileName: string): Promise<void> {
-  const fileType = generatedFileType(filePath);
-  const extension = fileName.split(".").pop()?.toLowerCase() || fileType.toLowerCase();
-  const destinationPath = await save({
-    defaultPath: fileName,
-    filters: [{ name: fileType, extensions: [extension] }],
-  });
-  if (!destinationPath) return;
-  await requestSidecar<string>(
-    "save_generated_file",
-    { file_path: filePath, destination_path: destinationPath },
-    (value): value is string => typeof value === "string",
-  );
+function isLawPdfPath(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 interface ChatConversationProps {
   messages: ChatMessage[];
+  branchMessages: ChatMessage[];
   isStreaming: boolean;
   elapsedSeconds: number;
+  editingMessageId: string | null;
   isThinkMode: boolean;
   modes: ChatModes;
   isExtractive: boolean;
-  onRetry: (prompt: string, skill: SkillTag) => void;
+  onRetry: (
+    prompt: string,
+    skill: SkillTag,
+    templateType?: MemoTemplateType | null,
+  ) => void;
+  onEditMessage: (messageId: string, content: string) => Promise<void>;
+  onEditingMessageChange: (messageId: string | null) => void;
+  onRegenerateMessage: (messageId: string) => Promise<void>;
+  onSelectBranch: (leafId: string) => void;
+  onOpenPdf: (filePath: string, page: number) => void;
 }
 
 export function ChatConversation({
   messages,
+  branchMessages,
   isStreaming,
   elapsedSeconds,
+  editingMessageId,
   isThinkMode,
   modes,
   isExtractive,
   onRetry,
+  onEditMessage,
+  onEditingMessageChange,
+  onRegenerateMessage,
+  onSelectBranch,
+  onOpenPdf,
 }: ChatConversationProps) {
   const { showSources } = useSettings();
   const [selectedPlants, setSelectedPlants] = useState<PlantData[]>([]);
@@ -133,6 +113,30 @@ export function ChatConversation({
     <>
       {messages.map((message, index) => {
     const key = message.id ?? `${message.role}-${index}`;
+    const isUnverifiedWeb = message.unverified_web === true;
+    const siblings = messageSiblings(branchMessages, message);
+    const messageId = messageNodeId(message);
+    const siblingIndex = siblings.findIndex(
+      (sibling) => messageNodeId(sibling) === messageId,
+    );
+    const branchNavigation =
+      !isStreaming && siblings.length > 1 && siblingIndex >= 0
+        ? {
+            current: siblingIndex + 1,
+            total: siblings.length,
+            onPrevious: () => selectSibling(siblingIndex - 1),
+            onNext: () => selectSibling(siblingIndex + 1),
+          }
+        : undefined;
+    function selectSibling(index: number) {
+      const sibling = siblings[index];
+      const siblingId = sibling ? messageNodeId(sibling) : null;
+      if (!siblingId) return;
+      onSelectBranch(
+        latestDescendantLeafId(branchMessages, siblingId) ?? siblingId,
+      );
+    }
+
     if (message.type === "law_upload") {
       return <LawUploadCard key={key} />;
     }
@@ -141,7 +145,20 @@ export function ChatConversation({
     }
     if (message.role === "user") {
       return (
-        <UserMessage key={key}>
+        <UserMessage
+          key={key}
+          content={message.content}
+          isEditing={message.id === editingMessageId}
+          onEditingChange={(isEditing) =>
+            onEditingMessageChange(isEditing ? message.id ?? null : null)
+          }
+          branchNavigation={branchNavigation}
+          onSave={
+            message.id && message.isEditable !== false
+              ? (content) => onEditMessage(message.id ?? "", content)
+              : undefined
+          }
+        >
           <Markdown>{message.content}</Markdown>
           {message.skill && (
             <span className="mt-2 inline-flex items-center rounded-md bg-[var(--accent-subtle)] px-2 py-1 text-meta font-medium text-[var(--accent)]">
@@ -165,70 +182,51 @@ export function ChatConversation({
     const previousMessage = messages[index - 1];
     const previousUser =
       previousMessage?.role === "user" ? previousMessage : undefined;
-    const fileType = message.file_type ?? (
-      message.file_path
-        ? generatedFileType(message.file_path)
-        : typeForSkill(previousUser?.skill ?? "pdf")
-    );
-    const retrySkill =
-      previousUser?.skill
-        ? previousUser.skill
-        : fileSkill(fileType);
-    const fileCard = message.file_path ? (
-      <GeneratedFileCard
-        fileName={fileNameFromPath(message.file_path)}
-        fileType={fileType}
-        filePath={message.file_path}
-        fileSize={message.file_size ?? Number.NaN}
-        status="success"
-        onRetry={
-          retrySkill && previousUser
-            ? () => onRetry(previousUser.content, retrySkill)
-            : undefined
-        }
-        onOpen={() => openGeneratedFilePath(message.file_path ?? "")}
-        onSaveAs={() =>
-          saveGeneratedFile(
-            message.file_path ?? "",
-            fileNameFromPath(message.file_path ?? ""),
-          )
-        }
-      />
-    ) : previousUser?.skill && !(isStreaming && index === messages.length - 1) ? (
-      <GeneratedFileCard
-        fileName={`Nogic ${fileType} document.${fileType.toLowerCase()}`}
-        fileType={fileType}
-        filePath=""
-        fileSize={Number.NaN}
-        status="error"
-        errorMessage={message.content}
-        onRetry={
-          retrySkill
-            ? () => onRetry(previousUser.content, retrySkill)
-            : undefined
-        }
-        onOpen={() => undefined}
-        onSaveAs={() => undefined}
-      />
-    ) : null;
-
     return (
       <div key={key}>
         <AssistantMessage
-          isStreaming={isStreaming && index === messages.length - 1}
+          isStreaming={
+            message.isStreaming ??
+            (isStreaming && index === messages.length - 1)
+          }
           elapsedSeconds={elapsedSeconds}
           thinkingText={message.thinking}
+          isReasoningStreaming={
+            message.isReasoningStreaming === true &&
+            typeof message.thinking === "string" &&
+            message.thinking.trim().length > 0
+          }
           stepText={message.step}
           showThinking={isThinkMode}
           modes={modes}
           isExtractive={isExtractive}
           rawContent={message.content}
+          persistedMessageId={message.persistedId}
+          isCached={message.cached === true}
+          unverifiedWeb={isUnverifiedWeb}
+          branchNavigation={branchNavigation}
+          onRegenerate={
+            index === messages.length - 1 && message.persistedId
+              ? (messageId) => void onRegenerateMessage(messageId)
+              : undefined
+          }
         >
           {message.content ? <Markdown>{message.content}</Markdown> : null}
-          {fileCard}
+          {!isUnverifiedWeb && (
+            <ChatFileCard
+              message={message}
+              previousUser={previousUser}
+              showErrorCard={!(isStreaming && index === messages.length - 1)}
+              onRetry={onRetry}
+            />
+          )}
         </AssistantMessage>
-        {message.site_data && <SiteCard data={message.site_data} />}
-        {message.plant_data && message.plant_data.length > 0 && (
+        {!isUnverifiedWeb && message.site_data && (
+          <SiteCard data={message.site_data} />
+        )}
+        {!isUnverifiedWeb &&
+          message.plant_data &&
+          message.plant_data.length > 0 && (
           <ul className="mt-2 space-y-1" aria-label="Plant results">
             {message.plant_data.map((plant) => (
               <PlantCard
@@ -240,20 +238,30 @@ export function ChatConversation({
             ))}
           </ul>
         )}
-        {message.web_sources && message.web_sources.length > 0 && (
+        {!isUnverifiedWeb &&
+          message.web_sources &&
+          message.web_sources.length > 0 && (
           <WebSources sources={message.web_sources} />
         )}
-        {showSources && message.sources && message.sources.length > 0 && (
+        {!isUnverifiedWeb &&
+          showSources &&
+          message.sources &&
+          message.sources.length > 0 && (
           <SourceFooter
             label="Sources"
             items={message.sources.map((source) => ({
               label: lawSourceLabel(source),
-              onClick: () =>
-                invoke<void>("open_law_pdf", {
-                  lawName: source.law_name,
-                  country: source.country ?? "MA",
-                  pageNum: source.page_num,
-                }),
+              onClick: async () => {
+                const filePath = await requestSidecar(
+                  "get_law_pdf_path",
+                  {
+                    law_name: source.law_name,
+                    country: source.country ?? "MA",
+                  },
+                  isLawPdfPath,
+                );
+                onOpenPdf(filePath, source.page_num);
+              },
             }))}
           />
         )}

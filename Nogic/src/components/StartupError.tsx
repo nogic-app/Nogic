@@ -12,7 +12,7 @@ export function StartupError() {
     setNotice(null);
     try {
       const payload = {
-        app_version: "1.0.1",
+        app_version: "1.2.0",
         error: "Sidecar failed to start",
         os: navigator.userAgent,
       };

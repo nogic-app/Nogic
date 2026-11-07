@@ -82,8 +82,8 @@ export function SettingsUsage() {
   };
 
   return (
-    <div className="space-y-7">
-      <section className="rounded-lg bg-[var(--bg-muted)] p-4">
+    <div className="max-w-3xl w-full flex flex-col gap-6">
+      <section className="w-full rounded-lg bg-[var(--bg-muted)] p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-meta text-[var(--text-secondary)]">
@@ -120,7 +120,7 @@ export function SettingsUsage() {
         </p>
       </section>
 
-      <section className="space-y-4">
+      <section className="w-full space-y-4">
         <h3 className="text-title font-medium text-[var(--text-primary)]">
           {t("usage.appUsage", "Nogic + Ollama")}
         </h3>
@@ -150,7 +150,7 @@ export function SettingsUsage() {
         />
       </section>
 
-      <section>
+      <section className="w-full">
         <div className="flex items-center justify-between gap-4">
           <h3 className="text-title font-medium text-[var(--text-primary)]">
             {t("usage.speed", "Speed")}

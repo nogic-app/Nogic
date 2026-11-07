@@ -7,6 +7,10 @@ import {
 import { isPlantDataArray } from "@/plants.ts";
 import { isWebSourceArray } from "@/types/webSources.ts";
 import {
+  isMemoTemplateType,
+  type MemoTemplateType,
+} from "@/memoTemplates.ts";
+import {
   normalizeErrorPayload,
   type ErrorPayload,
 } from "@/types/errors.ts";
@@ -73,28 +77,44 @@ export function completeAssistantMessage(
   finalThinking: string,
   finalContent: string,
   filePath: string | null,
+  persistedMessageId: string | null,
   fileSize?: number,
   fileType?: ChatMessage["file_type"],
+  templateType?: MemoTemplateType,
+  cached = false,
+  unverifiedWeb = false,
 ): ChatMessage[] {
   return updateAssistantMessage(current, messageId, (message) => {
     const finished: ChatMessage = {
       ...message,
+      isStreaming: false,
+      isReasoningStreaming: false,
+      cached,
       sources,
       plant_data: plantData,
       web_sources: webSources,
       site_data: siteData,
+      ...(unverifiedWeb ? { unverified_web: true } : {}),
       step: undefined,
     };
+    if (persistedMessageId) {
+      finished.persistedId = persistedMessageId;
+    } else {
+      delete finished.persistedId;
+    }
     if (filePath) finished.file_path = filePath;
     if (fileSize !== undefined) finished.file_size = fileSize;
     if (fileType !== undefined) finished.file_type = fileType;
+    if (templateType !== undefined) finished.template_type = templateType;
     if (finalContent.trim().length > 0) {
       finished.content = finalContent;
     } else if (message.content.trim().length === 0) {
       // Nothing was streamed and the payload has no text either.
       finished.content = EMPTY_ANSWER_NOTICE;
     }
-    if (finalThinking.length > 0) finished.thinking = finalThinking;
+    const thinking =
+      finalThinking.trim().length > 0 ? finalThinking : message.thinking;
+    if (thinking !== undefined) finished.thinking = thinking;
     return finished;
   });
 }
@@ -102,8 +122,7 @@ export function completeAssistantMessage(
 /**
  * Apply one chat-stream event (`chat_thinking_chunk`, `chat_step`,
  * `chat_chunk`, `chat_done`, `error`) to the assistant message whose ID
- * matches the event. The caller has already checked that the event belongs to
- * the active request.
+ * matches the event.
  */
 export function handleChatStreamEvent(
   payload: Record<string, unknown>,
@@ -114,7 +133,16 @@ export function handleChatStreamEvent(
 ): void {
   const messageId = typeof payload.id === "string" ? payload.id : null;
 
-  if (payload.type === "chat_thinking_chunk") {
+  if (payload.type === "chat_start") {
+    setMessages((current) =>
+      updateAssistantMessage(current, messageId, (message) => ({
+        ...message,
+        isStreaming: true,
+        isReasoningStreaming: false,
+      })),
+    );
+    setIsStreaming(true);
+  } else if (payload.type === "chat_thinking_chunk") {
     if (typeof payload.content !== "string") {
       console.error("Received a thinking chunk without string content.", payload);
       return;
@@ -123,7 +151,11 @@ export function handleChatStreamEvent(
     setMessages((current) =>
       updateAssistantMessage(current, messageId, (message) => ({
         ...message,
+        isStreaming: true,
         thinking: (message.thinking ?? "") + thinking,
+        isReasoningStreaming:
+          message.content.trim().length === 0 &&
+          `${message.thinking ?? ""}${thinking}`.trim().length > 0,
       })),
     );
   } else if (payload.type === "chat_step") {
@@ -134,7 +166,12 @@ export function handleChatStreamEvent(
     const step = payload.step;
     setMessages((current) =>
       updateAssistantMessage(current, messageId, (message) =>
-        ({ ...message, step }),
+        ({
+          ...message,
+          isStreaming: true,
+          isReasoningStreaming: false,
+          step: message.content.trim().length > 0 ? "drafting" : step,
+        }),
       ),
     );
   } else if (payload.type === "chat_chunk") {
@@ -146,8 +183,11 @@ export function handleChatStreamEvent(
     setMessages((current) =>
       updateAssistantMessage(current, messageId, (message) => ({
         ...message,
+        isStreaming: true,
         content: message.content + content,
-        ...(content.trim().length > 0 && !message.step
+        isReasoningStreaming:
+          content.trim().length > 0 ? false : message.isReasoningStreaming,
+        ...(content.trim().length > 0
           ? { step: "drafting" }
           : {}),
       })),
@@ -170,13 +210,19 @@ export function handleChatStreamEvent(
       typeof payload.file_path === "string"
         ? payload.file_path
         : null;
+    const persistedMessageId =
+      typeof payload.message_id === "string" ? payload.message_id : null;
     const fileSize = payload.file_size;
     const fileType = payload.file_type;
+    const templateType = payload.template_type;
+    const unverifiedWeb = payload.unverified_web === true;
     if (
       !isLawSourceArray(sources) ||
       !isPlantDataArray(plantData) ||
       !isWebSourceArray(webSources) ||
       siteData === null ||
+      (payload.unverified_web !== undefined &&
+        typeof payload.unverified_web !== "boolean") ||
       (finalThinking !== undefined && typeof finalThinking !== "string") ||
       (fileSize !== undefined &&
         fileSize !== null &&
@@ -185,7 +231,10 @@ export function handleChatStreamEvent(
           fileSize < 0)) ||
       (fileType !== undefined &&
         fileType !== null &&
-        !isGeneratedFileType(fileType))
+        !isGeneratedFileType(fileType)) ||
+      (templateType !== undefined &&
+        templateType !== null &&
+        !isMemoTemplateType(templateType))
     ) {
       console.error(
         "Received invalid sources, plant data, or site data from the Python sidecar.",
@@ -194,8 +243,17 @@ export function handleChatStreamEvent(
       setMessages((current) =>
         updateAssistantMessage(current, messageId, (message) =>
           message.content.length > 0
-            ? message
-            : { ...message, content: "The sidecar returned an unreadable response." },
+            ? {
+                ...message,
+                isStreaming: false,
+                isReasoningStreaming: false,
+              }
+            : {
+                ...message,
+                content: "The sidecar returned an unreadable response.",
+                isStreaming: false,
+                isReasoningStreaming: false,
+              },
         ),
       );
       activeRequestId.current = null;
@@ -213,8 +271,12 @@ export function handleChatStreamEvent(
         typeof finalThinking === "string" ? finalThinking : "",
         finalContent,
         filePath,
+        persistedMessageId,
         typeof fileSize === "number" ? fileSize : undefined,
         isGeneratedFileType(fileType) ? fileType : undefined,
+        isMemoTemplateType(templateType) ? templateType : undefined,
+        payload.cached === true,
+        unverifiedWeb,
       ),
     );
     activeRequestId.current = null;
@@ -226,8 +288,17 @@ export function handleChatStreamEvent(
     setMessages((current) =>
       updateAssistantMessage(current, messageId, (message) =>
         message.content.length > 0
-          ? message
-          : { ...message, content: errorPayload.message },
+          ? {
+              ...message,
+              isStreaming: false,
+              isReasoningStreaming: false,
+            }
+          : {
+              ...message,
+              content: errorPayload.message,
+              isStreaming: false,
+              isReasoningStreaming: false,
+            },
       ),
     );
     activeRequestId.current = null;

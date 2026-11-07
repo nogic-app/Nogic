@@ -1,22 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listenSidecar as listen } from "@/sidecarEvents.ts";
 import { WorkspaceView } from "@/components/WorkspaceView.tsx";
+import { ErrorBoundary } from "@/components/ErrorBoundary.tsx";
 import type { ChatItem } from "@/components/Sidebar.tsx";
 import { isChatItem } from "@/sidebarData.ts";
 import {
   WelcomeScreen,
+  activeBranchMessages,
+  latestMessageId,
+  messageNodeId,
   type ChatMessage,
 } from "@/WorkspaceContent.tsx";
 import { ChatConversation } from "@/components/ChatConversation.tsx";
 import { usePythonMessages } from "@/usePythonMessages.ts";
+import { mergeStreamMessage } from "@/chatStreamCache.ts";
 import { useMemoryDeleted } from "@/useMemoryDeleted.ts";
 import { useHardwareInfo } from "@/hooks/useHardwareInfo";
 import { isExtractiveHardware } from "@/hardwareTier";
 import { DEFAULT_CHAT_MODES, type ChatModes } from "@/chatModes.ts";
 import { resolveActiveModel } from "@/activeModel.ts";
 import { useSettings } from "@/contexts/SettingsContext.tsx";
-import { SettingsModal } from "@/components/SettingsModal.tsx";
 import { ChangelogModal, CURRENT_APP_VERSION } from "@/components/ChangelogModal.tsx";
 import type { SettingsTab } from "@/components/SettingsModal.tsx";
 import {
@@ -29,6 +41,7 @@ import { useStartupHealthCheck } from "@/hooks/useStartupHealthCheck.ts";
 import { useTranslation } from "react-i18next";
 import type { FileAttachment } from "@/components/FilePill.tsx";
 import type { SkillTag } from "@/components/Composer.tsx";
+import type { MemoTemplateType } from "@/memoTemplates.ts";
 import { useModelCapabilities } from "@/modelCapabilities.ts";
 import {
   EMPTY_LAW_LIBRARY_MESSAGE,
@@ -41,6 +54,17 @@ import {
 } from "@/types/errors.ts";
 import { requestSidecar } from "@/sidecarRequest.ts";
 import type { TokenUsage } from "@/types/tokenUsage.ts";
+
+const PdfViewerModal = lazy(() =>
+  import("@/components/PdfViewerModal.tsx").then(({ PdfViewerModal }) => ({
+    default: PdfViewerModal,
+  })),
+);
+const SettingsModal = lazy(() =>
+  import("@/components/SettingsModal.tsx").then(({ SettingsModal }) => ({
+    default: SettingsModal,
+  })),
+);
 
 /**
  * `/plant "name"` and `/plant name` both resolve to the bare name.
@@ -60,6 +84,8 @@ function parsePlantCommand(content: string): string | null {
   return name;
 }
 
+const NEW_CHAT_DRAFT_ID = "__new__";
+
 export default function Workspace() {
   const { t } = useTranslation();
   const {
@@ -77,7 +103,14 @@ export default function Workspace() {
   const { info: hardwareInfo } = useHardwareInfo();
   const isExtractive = isExtractiveHardware(hardwareInfo);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
+  const activeMessages = useMemo(
+    () => activeBranchMessages(messages, activeLeafId),
+    [activeLeafId, messages],
+  );
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [errorPayload, setErrorPayload] = useState<ErrorPayload | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -100,6 +133,10 @@ export default function Workspace() {
   const [isOnboarded, setIsOnboarded] = useState<boolean | null>(null);
   const [sidebarRefreshToken, setSidebarRefreshToken] = useState(0);
   const [lastTokenUsage, setLastTokenUsage] = useState<TokenUsage | null>(null);
+  const [pdfViewer, setPdfViewer] = useState<{
+    filePath: string;
+    page: number;
+  } | null>(null);
 
   useEffect(() => {
     if (settingsLoaded && seen_version !== CURRENT_APP_VERSION) {
@@ -116,15 +153,29 @@ export default function Workspace() {
   const plantLookupRequestId = useRef<string | null>(null);
   const remappedChatId = useRef<string | null>(null);
   const activeChatId = useRef<string | null>(null);
+  const activeStreamsRef = useRef<
+    Record<string, { message: ChatMessage; requestId: string }>
+  >({});
+  const draftsRef = useRef<
+    Record<string, { text: string; attachments: FileAttachment[] }>
+  >({});
+  const previousDraftChatId = useRef(NEW_CHAT_DRAFT_ID);
+  const persistedNewChatId = useRef<string | null>(null);
   const contextStartIndex = useRef(0);
   const skipHistoryFetch = useRef(false);
   const chatCache = useRef<Record<string, ChatMessage[]>>({});
+  const mutationRollback = useRef<(() => void) | null>(null);
+  const pendingRegeneration = useRef<{
+    requestId: string;
+    parentId: string | null;
+  } | null>(null);
   const skipCacheWrite = useRef(false);
   const retryRequest = useRef<{
     content: string;
     modes: ChatModes;
     attachments: FileAttachment[];
     skill: SkillTag | null;
+    templateType?: MemoTemplateType;
   } | null>(null);
 
   useEffect(() => {
@@ -144,10 +195,15 @@ export default function Workspace() {
       plantLookupRequestId,
       remappedChatId,
       activeChatId,
+      activeStreamsRef,
+      draftsRef,
       chatCache,
+      mutationRollback,
+      pendingRegeneration,
     },
     {
       setMessages,
+      setActiveLeafId,
       setIsStreaming,
       setActiveChat,
       setErrorPayload,
@@ -164,12 +220,16 @@ export default function Workspace() {
     activeRequestId.current = null;
     historyRequestId.current = null;
     plantLookupRequestId.current = null;
+    pendingRegeneration.current = null;
     remappedChatId.current = null;
     skipHistoryFetch.current = false;
     chatCache.current = {};
+    activeStreamsRef.current = {};
     setActiveChat(null);
     setMessages([]);
+    setActiveLeafId(null);
     setInput("");
+    setAttachments([]);
     setIsStreaming(false);
     setSidebarRefreshToken((token) => token + 1);
   }, []);
@@ -196,6 +256,22 @@ export default function Workspace() {
 
   useEffect(() => {
     const chatId = activeChat?.id;
+    const previousChatId = previousDraftChatId.current;
+    const draftChatId = chatId ?? NEW_CHAT_DRAFT_ID;
+    draftsRef.current[previousChatId] = { text: input, attachments };
+    if (
+      previousChatId === NEW_CHAT_DRAFT_ID &&
+      persistedNewChatId.current === draftChatId
+    ) {
+      draftsRef.current[draftChatId] = draftsRef.current[NEW_CHAT_DRAFT_ID];
+      delete draftsRef.current[NEW_CHAT_DRAFT_ID];
+      persistedNewChatId.current = null;
+    }
+    previousDraftChatId.current = draftChatId;
+    const draft = draftsRef.current[draftChatId];
+    setInput(draft?.text ?? "");
+    setAttachments(draft?.attachments ?? []);
+
     if (skipHistoryFetch.current) {
       skipHistoryFetch.current = false;
       return;
@@ -205,25 +281,44 @@ export default function Workspace() {
       return;
     }
     if (chatId?.startsWith("temp_")) return;
-    activeRequestId.current = null;
     historyRequestId.current = null;
     plantLookupRequestId.current = null;
-    setIsStreaming(false);
-    setInput("");
+    const activeStream = chatId ? activeStreamsRef.current[chatId] : undefined;
+    activeRequestId.current = activeStream?.requestId ?? null;
+    setIsStreaming(activeStream !== undefined);
+    setElapsedSeconds(0);
 
     if (!chatId) {
       setMessages([]);
+      setActiveLeafId(null);
       return;
     }
 
     const cachedMessages = chatCache.current[chatId];
     if (cachedMessages) {
+      const restoredMessages = activeStream
+        ? mergeStreamMessage(
+            cachedMessages,
+            activeStream.requestId,
+            activeStream.message,
+          )
+        : cachedMessages;
+      chatCache.current[chatId] = restoredMessages;
       skipCacheWrite.current = true;
-      setMessages(cachedMessages);
+      setMessages(restoredMessages);
+      setActiveLeafId(
+        activeStream?.requestId ?? latestMessageId(restoredMessages),
+      );
       return;
     }
     skipCacheWrite.current = true;
-    setMessages([]);
+    const initialMessages = activeStream
+      ? mergeStreamMessage([], activeStream.requestId, activeStream.message)
+      : [];
+    setMessages(initialMessages);
+    setActiveLeafId(
+      activeStream?.requestId ?? latestMessageId(initialMessages),
+    );
 
     const requestId = `history:${crypto.randomUUID()}`;
     historyRequestId.current = requestId;
@@ -253,9 +348,20 @@ export default function Workspace() {
     contextStartIndex.current = 0;
     const currentChatId = activeChatId.current;
     if (currentChatId && !currentChatId.startsWith("temp_")) {
-      chatCache.current[currentChatId] = messages;
+      const currentStream = activeStreamsRef.current[currentChatId];
+      chatCache.current[currentChatId] = currentStream
+        ? mergeStreamMessage(
+            messages,
+            currentStream.requestId,
+            currentStream.message,
+          )
+        : messages;
     }
     activeChatId.current = chat.id;
+    const selectedStream = activeStreamsRef.current[chat.id];
+    activeRequestId.current = selectedStream?.requestId ?? null;
+    setIsStreaming(selectedStream !== undefined);
+    setElapsedSeconds(0);
     setActiveProjectId(chat.project_id);
     if (chat.id.startsWith("temp_")) {
       activeRequestId.current = null;
@@ -263,13 +369,14 @@ export default function Workspace() {
       plantLookupRequestId.current = null;
       setIsStreaming(false);
       setMessages([]);
-      setInput("");
+      setActiveLeafId(null);
     }
     setActiveChat(chat);
   }, [messages]);
 
   const handleChatDeleted = useCallback((chatId: string) => {
     delete chatCache.current[chatId];
+    delete activeStreamsRef.current[chatId];
     if (activeChatId.current !== chatId) return;
     contextStartIndex.current = 0;
     activeChatId.current = null;
@@ -278,7 +385,7 @@ export default function Workspace() {
     plantLookupRequestId.current = null;
     setActiveChat(null);
     setMessages([]);
-    setInput("");
+    setActiveLeafId(null);
     setIsStreaming(false);
   }, []);
 
@@ -291,10 +398,11 @@ export default function Workspace() {
     contextStartIndex.current = 0;
     skipHistoryFetch.current = false;
     chatCache.current = {};
+    activeStreamsRef.current = {};
     setActiveProjectId(null);
     setActiveChat(null);
     setMessages([]);
-    setInput("");
+    setActiveLeafId(null);
     setIsStreaming(false);
   }, []);
 
@@ -309,7 +417,7 @@ export default function Workspace() {
     plantLookupRequestId.current = null;
     setActiveChat(null);
     setMessages([]);
-    setInput("");
+    setActiveLeafId(null);
     setIsStreaming(false);
   }, [activeProjectId]);
 
@@ -319,20 +427,52 @@ export default function Workspace() {
     contextStartIndex.current = 0;
     setActiveChat(null);
     setMessages([]);
-    setInput("");
+    setActiveLeafId(null);
   }, []);
 
   const handleSend = async (
     modes: ChatModes = DEFAULT_CHAT_MODES,
     attachments: FileAttachment[] = [],
     skill: SkillTag | null = null,
+    templateType?: MemoTemplateType,
     retryContent?: string,
   ) => {
+    setEditingMessageId(null);
     const content = (retryContent ?? input).trim();
     if ((!content && attachments.length === 0 && skill === null) || isStreaming) return;
     setErrorPayload(null);
-    retryRequest.current = { content, modes, attachments, skill };
+    retryRequest.current = {
+      content,
+      modes,
+      attachments,
+      skill,
+      templateType,
+    };
     setIsStreaming(true);
+
+    const appendLocalCommandTurn = (
+      assistantMessage: Omit<ChatMessage, "role" | "parent_id">,
+    ) => {
+      const userMessageId = crypto.randomUUID();
+      const assistantMessageId = assistantMessage.id ?? crypto.randomUUID();
+      const userMessage: ChatMessage = {
+        role: "user",
+        content,
+        id: userMessageId,
+        parent_id: latestMessageId(activeMessages),
+        isEditable: false,
+      };
+      const responseMessage: ChatMessage = {
+        ...assistantMessage,
+        role: "assistant",
+        id: assistantMessageId,
+        parent_id: userMessageId,
+      };
+
+      setMessages((current) => [...current, userMessage]);
+      setMessages((current) => [...current, responseMessage]);
+      setActiveLeafId(assistantMessageId);
+    };
 
     if (
       !content.startsWith("/") &&
@@ -355,27 +495,18 @@ export default function Workspace() {
 
     if (content === "/add-law" || content === "/add-plant") {
       setIsStreaming(false);
-      setMessages((current) => [
-        ...current,
-        { role: "user", content },
-        {
-          role: "assistant",
-          content: "",
-          type: content === "/add-law" ? "law_upload" : "plant_upload",
-        },
-      ]);
+      appendLocalCommandTurn({
+        content: "",
+        type: content === "/add-law" ? "law_upload" : "plant_upload",
+      });
       setInput("");
       return;
     }
 
     if (content === "/help") {
       setIsStreaming(false);
-      setMessages((current) => [
-        ...current,
-        { role: "user", content },
-        {
-          role: "assistant",
-          content: `Here are the commands you can use:
+      appendLocalCommandTurn({
+        content: `Here are the commands you can use:
 
 **Library Management**
 - \`/add-law\` : Add a custom law PDF to your library.
@@ -388,8 +519,7 @@ export default function Workspace() {
 **Chat Modes**
 - Toggle **DeepThink** or **Web** using the buttons below the composer.
 - Switch between **Fast** and **Think** using the dropdown.`,
-        },
-      ]);
+      });
       setInput("");
       return;
     }
@@ -430,6 +560,7 @@ export default function Workspace() {
         });
         const newChat = await responsePromise;
         chatId = newChat.id;
+        persistedNewChatId.current = newChat.id;
         chatCache.current[chatId] = messages;
         skipHistoryFetch.current = true;
         activeChatId.current = chatId;
@@ -443,14 +574,9 @@ export default function Workspace() {
     if (plantName !== null) {
       if (!plantName) {
         setIsStreaming(false);
-        setMessages((current) => [
-          ...current,
-          { role: "user", content },
-          {
-            role: "assistant",
-            content: 'Use /plant "name" to look up a plant.',
-          },
-        ]);
+        appendLocalCommandTurn({
+          content: 'Use /plant "name" to look up a plant.',
+        });
         setInput("");
         return;
       }
@@ -458,11 +584,7 @@ export default function Workspace() {
       const requestId = `plant_lookup:${crypto.randomUUID()}`;
       setIsStreaming(false);
       plantLookupRequestId.current = requestId;
-      setMessages((current) => [
-        ...current,
-        { role: "user", content },
-        { role: "assistant", content: "", id: requestId },
-      ]);
+      appendLocalCommandTurn({ content: "", id: requestId });
       setInput("");
       try {
         await invoke("send_to_sidecar", {
@@ -495,7 +617,13 @@ export default function Workspace() {
       setIsStreaming(false);
       setMessages((current) => [
         ...current,
-        { role: "user", content, attachments, skill: skill ?? undefined },
+        {
+          role: "user",
+          content,
+          attachments,
+          skill: skill ?? undefined,
+          template_type: templateType,
+        },
         {
           role: "assistant",
           content:
@@ -507,29 +635,51 @@ export default function Workspace() {
     }
     if (model !== activeModel) setActiveModel(model);
 
-    const userMessage: ChatMessage = { role: "user", content, attachments, skill: skill ?? undefined };
+    const userMessageId = crypto.randomUUID();
+    const userMessage: ChatMessage = {
+      role: "user",
+      content,
+      id: userMessageId,
+      attachments,
+      skill: skill ?? undefined,
+      template_type: templateType,
+    };
+    userMessage.parent_id = [...activeMessages]
+      .reverse()
+      .map(messageNodeId)
+      .find((id): id is string => id !== null) ?? null;
     const isSlashCommand = /^\/(?:site|help|plant)(?:\s|$)/.test(content);
-    const conversation = [...messages.slice(contextStartIndex.current), userMessage];
+    const conversation = [
+      ...activeMessages.slice(contextStartIndex.current),
+      userMessage,
+    ];
     const requestId = `chat:${crypto.randomUUID()}`;
     activeRequestId.current = requestId;
     setActiveModes(modes);
+    const assistantMessage: ChatMessage = {
+      role: "assistant",
+      content: "",
+      id: requestId,
+      parent_id: userMessageId,
+      isStreaming: true,
+      thinking: "",
+      step: modes.web && !isSlashCommand ? "searching web" : "thinking",
+    };
+    activeStreamsRef.current[chatId] = {
+      message: assistantMessage,
+      requestId,
+    };
+    chatCache.current[chatId] = [
+      ...(chatCache.current[chatId] ?? messages),
+      userMessage,
+      assistantMessage,
+    ];
     setMessages((current) => [
       ...current,
       userMessage,
-      {
-        role: "assistant",
-        content: "",
-        // Stream events are addressed by request ID, so chunks cannot land on
-        // a different message if the array changes mid-stream.
-        id: requestId,
-        thinking: "",
-        // Keep the ticker stable while the request crosses the stdio boundary.
-        step:
-          modes.web && !isSlashCommand
-            ? "searching web"
-            : "thinking",
-      },
+      assistantMessage,
     ]);
+    setActiveLeafId(requestId);
     setElapsedSeconds(0);
     setInput("");
 
@@ -543,6 +693,8 @@ export default function Workspace() {
           messages: conversation,
           attachments,
           skill,
+          template_type: templateType,
+          user_message_id: userMessageId,
           modes,
           hardware: hardwareInfo,
           temperature,
@@ -553,29 +705,271 @@ export default function Workspace() {
       });
     } catch (error) {
       console.error("Failed to send a message to the Python sidecar.", error);
-      setErrorPayload(normalizeErrorPayload(error));
       if (activeRequestId.current !== requestId) {
-        setIsStreaming(false);
+        const stream = activeStreamsRef.current[chatId];
+        if (stream?.requestId === requestId) {
+          stream.message = {
+            ...stream.message,
+            content: `Unable to send message: ${normalizeErrorPayload(error).message}`,
+            isStreaming: false,
+          };
+          chatCache.current[chatId] = mergeStreamMessage(
+            chatCache.current[chatId] ?? [],
+            requestId,
+            stream.message,
+          );
+          delete activeStreamsRef.current[chatId];
+        }
+        if (activeChatId.current === chatId) setIsStreaming(false);
         return;
       }
+      setErrorPayload(normalizeErrorPayload(error));
       const detail = normalizeErrorPayload(error).message;
       setMessages((current) => {
         const last = current.at(-1);
         if (!last || last.role !== "assistant") return current;
-        return [...current.slice(0, -1), { ...last, content: `Unable to send message: ${detail}` }];
+        return [
+          ...current.slice(0, -1),
+          {
+            ...last,
+            content: `Unable to send message: ${detail}`,
+            isStreaming: false,
+          },
+        ];
       });
       activeRequestId.current = null;
+      delete activeStreamsRef.current[chatId];
       setIsStreaming(false);
     }
   };
 
+  const handleEditMessage = useCallback(
+    async (messageId: string, newContent: string) => {
+      const chatId = activeChatId.current;
+      const model = await resolveActiveModel(activeModel);
+      if (!chatId || !model) throw new Error("Select a model before editing a message.");
+      const previousMessages = messages;
+      const sourceMessage = activeMessages.find(
+        (message) => message.id === messageId,
+      );
+      if (!sourceMessage) throw new Error("The message is no longer available.");
+      const requestId = `chat:${crypto.randomUUID()}`;
+      const optimisticUserId = crypto.randomUUID();
+      const optimisticUser: ChatMessage = {
+        role: "user",
+        content: newContent,
+        id: optimisticUserId,
+        parent_id: sourceMessage.parent_id ?? null,
+      };
+      const optimisticAssistant: ChatMessage = {
+        role: "assistant",
+        content: "",
+        id: requestId,
+        parent_id: optimisticUserId,
+        isStreaming: true,
+        thinking: "",
+      };
+      activeStreamsRef.current[chatId] = {
+        message: optimisticAssistant,
+        requestId,
+      };
+      chatCache.current[chatId] = [
+        ...(chatCache.current[chatId] ?? messages),
+        optimisticUser,
+        optimisticAssistant,
+      ];
+      const previousLeafId = activeLeafId;
+      mutationRollback.current = () => {
+        setMessages(previousMessages);
+        setActiveLeafId(previousLeafId);
+        setIsStreaming(false);
+      };
+      setMessages((current) => [...current, optimisticUser, optimisticAssistant]);
+      setActiveLeafId(requestId);
+      setIsStreaming(true);
+      setElapsedSeconds(0);
+      setActiveModes(activeModes);
+      activeRequestId.current = requestId;
+      try {
+        await invoke("send_to_sidecar", {
+          message: JSON.stringify({
+            action: "edit_message_and_regenerate",
+            id: requestId,
+            chat_id: chatId,
+            message_id: messageId,
+            new_content: newContent,
+            model,
+            modes: activeModes,
+            hardware: hardwareInfo,
+            temperature,
+            num_ctx: contextWindow,
+            keep_alive: modelKeepAlive,
+            persona,
+          }),
+        });
+      } catch (error) {
+        const stream = activeStreamsRef.current[chatId];
+        if (stream?.requestId === requestId) {
+          stream.message = {
+            ...stream.message,
+            content: `Unable to send message: ${normalizeErrorPayload(error).message}`,
+            isStreaming: false,
+          };
+          chatCache.current[chatId] = mergeStreamMessage(
+            chatCache.current[chatId] ?? [],
+            requestId,
+            stream.message,
+          );
+          delete activeStreamsRef.current[chatId];
+        }
+        if (activeChatId.current === chatId) {
+          mutationRollback.current?.();
+          mutationRollback.current = null;
+        }
+        if (activeRequestId.current === requestId) {
+          activeRequestId.current = null;
+        }
+        if (activeChatId.current === chatId) {
+          setErrorPayload(normalizeErrorPayload(error));
+        }
+      }
+    },
+    [
+      activeModel,
+      activeLeafId,
+      activeMessages,
+      activeModes,
+      contextWindow,
+      hardwareInfo,
+      messages,
+      modelKeepAlive,
+      persona,
+      temperature,
+    ],
+  );
+
+  const handleRegenerateMessage = useCallback(
+    async (messageId: string) => {
+      const chatId = activeChatId.current;
+      const model = await resolveActiveModel(activeModel);
+      if (!chatId || !model) throw new Error("Select a model before regenerating a message.");
+      const previousMessages = messages;
+      const assistantMessage = activeMessages.find(
+        (message) => message.persistedId === messageId,
+      );
+      if (!assistantMessage) throw new Error("The message is no longer available.");
+      if (
+        assistantMessage.role !== "assistant" ||
+        assistantMessage.isStreaming ||
+        assistantMessage.persistedId !== messageId
+      ) {
+        throw new Error("Only a completed assistant message can be regenerated.");
+      }
+      const requestId = `chat:${crypto.randomUUID()}`;
+      pendingRegeneration.current = {
+        requestId,
+        parentId: assistantMessage.parent_id ?? null,
+      };
+      const previousLeafId = activeLeafId;
+      mutationRollback.current = () => {
+        setMessages(previousMessages);
+        setActiveLeafId(previousLeafId);
+        setIsStreaming(false);
+      };
+      const streamingMessage: ChatMessage = {
+        role: "assistant",
+        content: "",
+        id: requestId,
+        parent_id: assistantMessage.parent_id ?? null,
+        isStreaming: true,
+        thinking: "",
+        step: "Regenerating...",
+      };
+      activeStreamsRef.current[chatId] = {
+        message: streamingMessage,
+        requestId,
+      };
+      chatCache.current[chatId] = [
+        ...(chatCache.current[chatId] ?? messages),
+        streamingMessage,
+      ];
+      setMessages((current) => [
+        ...current,
+        streamingMessage,
+      ]);
+      setActiveLeafId(requestId);
+      setIsStreaming(true);
+      setElapsedSeconds(0);
+      setActiveModes(activeModes);
+      activeRequestId.current = requestId;
+      try {
+        await invoke("send_to_sidecar", {
+          message: JSON.stringify({
+            action: "regenerate_message",
+            id: requestId,
+            chat_id: chatId,
+            message_id: messageId,
+            model,
+            modes: activeModes,
+            hardware: hardwareInfo,
+            temperature,
+            num_ctx: contextWindow,
+            keep_alive: modelKeepAlive,
+            persona,
+          }),
+        });
+      } catch (error) {
+        pendingRegeneration.current = null;
+        const stream = activeStreamsRef.current[chatId];
+        if (stream?.requestId === requestId) {
+          stream.message = {
+            ...stream.message,
+            content: `Unable to send message: ${normalizeErrorPayload(error).message}`,
+            isStreaming: false,
+          };
+          chatCache.current[chatId] = mergeStreamMessage(
+            chatCache.current[chatId] ?? [],
+            requestId,
+            stream.message,
+          );
+          delete activeStreamsRef.current[chatId];
+        }
+        if (activeChatId.current === chatId) mutationRollback.current?.();
+        if (activeChatId.current === chatId) {
+          mutationRollback.current = null;
+        }
+        if (activeRequestId.current === requestId) {
+          activeRequestId.current = null;
+        }
+        if (activeChatId.current === chatId) {
+          setErrorPayload(normalizeErrorPayload(error));
+        }
+      }
+    },
+    [
+      activeModel,
+      activeLeafId,
+      activeMessages,
+      activeModes,
+      contextWindow,
+      hardwareInfo,
+      messages,
+      modelKeepAlive,
+      persona,
+      temperature,
+    ],
+  );
+
   const handleStop = () => {
+    const chatId = activeChatId.current;
+    if (chatId) delete activeStreamsRef.current[chatId];
     activeRequestId.current = null;
     setIsStreaming(false);
     setMessages((current) => {
       const last = current.at(-1);
-      if (!last || last.role !== "assistant" || last.content.length > 0) return current;
-      return current.slice(0, -1);
+      if (!last || last.role !== "assistant") return current;
+      if (last.content.length === 0) return current.slice(0, -1);
+      return [...current.slice(0, -1), { ...last, isStreaming: false }];
     });
   };
 
@@ -587,7 +981,7 @@ export default function Workspace() {
       { chat_id: chatId },
       (value): value is boolean => value === true,
     );
-    contextStartIndex.current = messages.length;
+    contextStartIndex.current = activeMessages.length;
   };
 
   // A failed boot ping replaces the whole workspace: the sidecar is the app.
@@ -603,99 +997,146 @@ export default function Workspace() {
   }
 
   return (
-    <>
-      <WorkspaceView
-        chatTitle={activeChat?.title ?? "New Chat"}
-        onClearContext={handleClearContext}
-        input={input}
-        onInputChange={setInput}
-        isStreaming={isStreaming}
-        onSend={handleSend}
-        onStop={handleStop}
-        activeChatId={activeChat?.id ?? null}
-        onSelectChat={handleSelectChat}
-        onChatDeleted={handleChatDeleted}
-        onProjectDeleted={handleProjectDeleted}
-        onCreateChat={handleCreateChat}
-        onProjectCreated={handleProjectCreated}
-        isSidebarOpen={isSidebarOpen}
-        onToggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)}
-        isChatSearchOpen={isChatSearchOpen}
-        chatSearch={chatSearch}
-        onCloseChatSearch={() => {
-          setIsChatSearchOpen(false);
-          setChatSearch("");
-        }}
-        onChatSearchChange={setChatSearch}
-        sidebarRefreshToken={sidebarRefreshToken}
-        onOpenSettings={() => {
-          setSettingsTab("general");
-          setIsSettingsOpen(true);
-        }}
-        onCreateChatShortcut={() => handleCreateChat(null)}
-        onCreateProjectShortcut={() => {
-          document.getElementById("new-project-button")?.click();
-        }}
-        onToggleSearchShortcut={() => {
-          if (!isSidebarOpen) {
-            setIsSidebarOpen(true);
-            setIsChatSearchOpen(true);
-            return;
+    <div className="flex h-full w-full overflow-hidden bg-[var(--bg)]">
+      <ErrorBoundary key={activeChat?.id ?? NEW_CHAT_DRAFT_ID}>
+        <WorkspaceView
+          chatTitle={activeChat?.title ?? "New Chat"}
+          onClearContext={handleClearContext}
+          input={input}
+          onInputChange={setInput}
+          attachments={attachments}
+          onAttachmentsChange={setAttachments}
+          isStreaming={isStreaming}
+          onSend={handleSend}
+          onStop={handleStop}
+          activeChatId={activeChat?.id ?? null}
+          onSelectChat={handleSelectChat}
+          onChatDeleted={handleChatDeleted}
+          onProjectDeleted={handleProjectDeleted}
+          onCreateChat={handleCreateChat}
+          onProjectCreated={handleProjectCreated}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen((isOpen) => !isOpen)}
+          isChatSearchOpen={isChatSearchOpen}
+          chatSearch={chatSearch}
+          onCloseChatSearch={() => {
+            setIsChatSearchOpen(false);
+            setChatSearch("");
+          }}
+          onChatSearchChange={setChatSearch}
+          sidebarRefreshToken={sidebarRefreshToken}
+          onOpenSettings={() => {
+            setSettingsTab("general");
+            setIsSettingsOpen(true);
+          }}
+          onCreateChatShortcut={() => handleCreateChat(null)}
+          onCreateProjectShortcut={() => {
+            document.getElementById("new-project-button")?.click();
+          }}
+          onToggleSearchShortcut={() => {
+            if (!isSidebarOpen) {
+              setIsSidebarOpen(true);
+              setIsChatSearchOpen(true);
+              return;
+            }
+            setIsChatSearchOpen((isOpen) => {
+              if (isOpen) setChatSearch("");
+              return !isOpen;
+            });
+          }}
+          onEscapeShortcut={() => {
+            setIsChatSearchOpen(false);
+            setChatSearch("");
+            setIsSettingsOpen(false);
+            setIsChangelogOpen(false);
+          }}
+          onOpenUsage={() => {
+            setSettingsTab("usage");
+            setIsSettingsOpen(true);
+          }}
+          lastTokenUsage={lastTokenUsage}
+          errorPayload={errorPayload}
+          onRetryError={() => {
+            const previous = retryRequest.current;
+            if (previous) {
+              void handleSend(
+                previous.modes,
+                previous.attachments,
+                previous.skill,
+                previous.templateType,
+                previous.content,
+              );
+            }
+          }}
+          supportsVision={supportsVision}
+          modelCapabilities={modelCapabilities}
+          supportsThinking={supportsThinking}
+          isWelcome={activeMessages.length === 0 && !isStreaming}
+          welcome={<WelcomeScreen onPromptSelect={setInput} t={t} />}
+          conversation={
+            <ChatConversation
+              messages={activeMessages}
+              branchMessages={messages}
+              isStreaming={isStreaming}
+              editingMessageId={editingMessageId}
+              elapsedSeconds={elapsedSeconds}
+              isThinkMode={activeModes.think}
+              modes={activeModes}
+              isExtractive={isExtractive}
+              onRetry={(prompt, skill, templateType) => {
+                void handleSend(
+                  activeModes,
+                  [],
+                  skill,
+                  templateType ?? undefined,
+                  prompt,
+                );
+              }}
+              onEditMessage={handleEditMessage}
+              onEditingMessageChange={setEditingMessageId}
+              onRegenerateMessage={handleRegenerateMessage}
+              onSelectBranch={(leafId) => {
+                contextStartIndex.current = 0;
+                setActiveLeafId(leafId);
+              }}
+              onOpenPdf={(filePath, page) => {
+                console.log("Opening PDF modal:", filePath, page);
+                setPdfViewer({ filePath, page });
+              }}
+            />
           }
-          setIsChatSearchOpen((isOpen) => {
-            if (isOpen) setChatSearch("");
-            return !isOpen;
-          });
-        }}
-        onEscapeShortcut={() => {
-          setIsChatSearchOpen(false);
-          setChatSearch("");
-          setIsSettingsOpen(false);
-          setIsChangelogOpen(false);
-        }}
-        onOpenUsage={() => {
-          setSettingsTab("usage");
-          setIsSettingsOpen(true);
-        }}
-        lastTokenUsage={lastTokenUsage}
-        errorPayload={errorPayload}
-        onRetryError={() => {
-          const previous = retryRequest.current;
-          if (previous) {
-            void handleSend(
-              previous.modes,
-              previous.attachments,
-              previous.skill,
-              previous.content,
-            );
-          }
-        }}
-        supportsVision={supportsVision}
-        modelCapabilities={modelCapabilities}
-        supportsThinking={supportsThinking}
-        isWelcome={messages.length === 0 && !isStreaming}
-        welcome={<WelcomeScreen onPromptSelect={setInput} t={t} />}
-        conversation={
-          <ChatConversation
-            messages={messages}
-            isStreaming={isStreaming}
-            elapsedSeconds={elapsedSeconds}
-            isThinkMode={activeModes.think}
-            modes={activeModes}
-            isExtractive={isExtractive}
-            onRetry={(prompt, skill) => {
-              void handleSend(activeModes, [], skill, prompt);
-            }}
-          />
-        }
-      />
-      <SettingsModal
-        open={isSettingsOpen}
-        initialTab={settingsTab}
-        onClose={() => setIsSettingsOpen(false)}
-        onOpenChangelog={() => setIsChangelogOpen(true)}
-      />
+        />
+      </ErrorBoundary>
+      {pdfViewer && (
+        <div className="fixed inset-0 z-[100] isolate flex">
+          <ErrorBoundary>
+            <Suspense fallback={null}>
+              <PdfViewerModal
+                key={`${pdfViewer.filePath}:${pdfViewer.page}`}
+                filePath={pdfViewer.filePath}
+                initialPage={pdfViewer.page}
+                t={t}
+                onClose={() => setPdfViewer(null)}
+              />
+            </Suspense>
+          </ErrorBoundary>
+        </div>
+      )}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <ErrorBoundary>
+            <Suspense fallback={null}>
+              <SettingsModal
+                open={isSettingsOpen}
+                initialTab={settingsTab}
+                onClose={() => setIsSettingsOpen(false)}
+                onOpenChangelog={() => setIsChangelogOpen(true)}
+              />
+            </Suspense>
+          </ErrorBoundary>
+        </div>
+      )}
       <ChangelogModal open={isChangelogOpen} onClose={closeChangelog} />
-    </>
+    </div>
   );
 }

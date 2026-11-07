@@ -3,7 +3,7 @@
 The memo layout lives in ``memo_layout`` so both files stay under the
 300-line rule. Export scope is explicit: the memo sections are built only
 from the messages passed in, never from the whole plant table or another
-chat. Callers that do not pass messages get this chat's persisted rows.
+chat. Callers that do not pass messages get this chat's active message branch.
 """
 
 from __future__ import annotations
@@ -12,10 +12,11 @@ import logging
 import tempfile
 from typing import Any
 
-from db import get_connection, get_messages, get_settings
+from db import build_active_branch, get_connection, get_settings
 from export_paths import export_path
 from memo_content import memo_title
 from memo_layout import render_docx, render_pdf
+from memo_templates import get_template_type
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
@@ -43,7 +44,7 @@ def _load_chat(
             (chat_id,),
         ).fetchone()
     if messages is None:
-        messages = get_messages(chat_id)
+        messages = build_active_branch(chat_id)
     else:
         messages = [message for message in messages if isinstance(message, dict)]
     if not messages:
@@ -75,14 +76,22 @@ def export_chat_pdf(
     chat_id: str,
     messages: Messages | None = None,
     map_image_path: str | None = None,
+    template_type: str = "default",
 ) -> str:
     """Write the chat export to a PDF in a temp directory and return its path."""
+    template_type = get_template_type(template_type)
     title, _project, messages = _load_chat(chat_id, messages)
     title = memo_title(title)
     path = _output_path(title, "pdf")
     try:
         render_pdf(
-            title, messages, path, _memo_model_name(), _memo_user_name(), map_image_path
+            title,
+            messages,
+            path,
+            _memo_model_name(),
+            _memo_user_name(),
+            map_image_path,
+            template_type,
         )
     except Exception:
         logger.exception("Could not export chat as PDF.")
@@ -94,14 +103,22 @@ def export_chat_docx(
     chat_id: str,
     messages: Messages | None = None,
     map_image_path: str | None = None,
+    template_type: str = "default",
 ) -> str:
     """Write the chat export to a .docx in a temp directory and return its path."""
+    template_type = get_template_type(template_type)
     title, _project, messages = _load_chat(chat_id, messages)
     title = memo_title(title)
     path = _output_path(title, "docx")
     try:
         render_docx(
-            title, messages, path, _memo_model_name(), _memo_user_name(), map_image_path
+            title,
+            messages,
+            path,
+            _memo_model_name(),
+            _memo_user_name(),
+            map_image_path,
+            template_type,
         )
     except Exception:
         logger.exception("Could not export chat as Word.")

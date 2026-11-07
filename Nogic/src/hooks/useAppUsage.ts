@@ -15,10 +15,15 @@ export function useAppUsage(intervalMs: number): AppUsage | null {
           "get_app_usage",
           {},
           isAppUsage,
+          15000,
         );
         if (!cancelled) setUsage(data);
       } catch (error) {
         if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("did not answer") || /timeout/i.test(message)) {
+          return;
+        }
         console.error("Could not read Ollama model usage.", error);
         setUsage(null);
       }

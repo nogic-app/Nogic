@@ -7,6 +7,7 @@ import { SettingsMemory } from "./SettingsMemory.tsx";
 import { SettingsAdvanced } from "./SettingsAdvanced.tsx";
 import { SettingsAbout } from "./SettingsAbout.tsx";
 import { SettingsUsage } from "./SettingsUsage.tsx";
+import { SettingsLibrary } from "./SettingsLibrary.tsx";
 import { ErrorBoundary } from "./ErrorBoundary.tsx";
 import { useTranslation } from "react-i18next";
 
@@ -14,6 +15,7 @@ export type SettingsTab =
   | "general"
   | "models"
   | "usage"
+  | "library"
   | "memory"
   | "advanced"
   | "about";
@@ -22,6 +24,7 @@ const TABS: ReadonlyArray<SettingsTab> = [
   "general",
   "models",
   "usage",
+  "library",
   "memory",
   "advanced",
   "about",
@@ -94,13 +97,13 @@ export function SettingsModal({
                   aria-current={activeTab === tab ? "page" : undefined}
                   onClick={() => setActiveTab(tab)}
                   className={cn(
-                    "block w-full rounded-md px-3 py-1.5 text-start text-sec transition-colors duration-[120ms]",
+                    "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-start text-sec transition-colors duration-[120ms]",
                     activeTab === tab
                       ? "bg-[var(--accent-subtle)] text-[var(--text-primary)]"
                       : "text-[var(--text-secondary)] hover:bg-[var(--bg-muted)] hover:text-[var(--text-primary)]",
                   )}
                 >
-                  {t(`settings.${tab}`)}
+                  <span>{t(`settings.${tab}`)}</span>
                 </button>
               </li>
             ))}
@@ -128,6 +131,7 @@ export function SettingsModal({
               {activeTab === "general" ? <SettingsGeneral /> : null}
               {activeTab === "models" ? <SettingsModels /> : null}
               {activeTab === "usage" ? <SettingsUsage /> : null}
+              {activeTab === "library" ? <SettingsLibrary /> : null}
               {activeTab === "memory" ? <SettingsMemory /> : null}
               {activeTab === "advanced" ? <SettingsAdvanced /> : null}
               {activeTab === "about" ? <SettingsAbout onOpenChangelog={onOpenChangelog} /> : null}

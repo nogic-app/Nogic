@@ -7,6 +7,10 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { requestSidecar } from "@/sidecarRequest.ts";
+import {
+  memoTemplateLabel,
+  type MemoTemplateType,
+} from "@/memoTemplates.ts";
 
 export type GeneratedFileType = "PDF" | "DOCX" | "XLSX";
 export type GeneratedFileStatus = "success" | "missing" | "error";
@@ -20,6 +24,7 @@ interface GeneratedFileCardProps {
   fileType: GeneratedFileType;
   filePath: string;
   fileSize: number;
+  templateType?: MemoTemplateType | null;
   status: GeneratedFileStatus;
   onRetry?: () => void;
   onOpen: () => void | Promise<void>;
@@ -51,6 +56,7 @@ export function GeneratedFileCard({
   fileType,
   filePath,
   fileSize,
+  templateType,
   status,
   onRetry,
   onOpen,
@@ -140,6 +146,11 @@ export function GeneratedFileCard({
           <p className="mt-0.5 text-meta text-secondary">
             {typeLabel(fileType)} · {formatFileSize(fileSize)}
           </p>
+          {templateType && (
+            <p className="mt-0.5 text-meta text-secondary">
+              Template: {memoTemplateLabel(templateType)}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button

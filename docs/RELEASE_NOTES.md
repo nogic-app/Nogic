@@ -1,32 +1,39 @@
-# Nogic v1.1.0 Beta (The UX & Control Update)
+# Nogic v1.2.0 — The Grounded Workflow Update
 
-This is a massive Quality of Life and UX upgrade for Nogic. While the core "honest RAG" engine remains the same, V1.1 gives you total control over how the AI behaves, how it uses your hardware, and how you interact with your data.
+Nogic v1.2.0 makes everyday research faster while keeping its local-first,
+source-grounded behaviour explicit.
 
-## ✨ What's New
-- **AI-Generated Chat Titles**: The sidebar now automatically summarizes your first prompt into a clean 2-4 word title.
-- **Message Editing & Regeneration**: Edit your prompts and re-run the AI without starting a new chat. *(Note: Deferred to V1.2)*
-- **VRAM Control (`keep_alive`)**: You can now tell Ollama to unload the model immediately to save VRAM, or keep it loaded forever for instant responses.
-- **Model Deletion**: Delete models directly from the Settings → Models screen to free up disk space.
-- **System Persona**: Customize the AI's tone in Settings → General (e.g., "You are a strict academic tutor").
-- **Temperature & Context Sliders**: Adjust the AI's creativity (Temperature) and short-term memory (Context Window) in Settings → Models.
-- **Deterministic Plant Comparison**: Select 2-3 plants in the chat using the checkboxes to instantly generate a side-by-side comparison table (no hallucination).
-- **Copy & Markdown Export**: Copy any AI message with one click, or export an entire chat as Markdown for Notion/Obsidian.
-- **Clear Context (Eraser)**: Keep your visual chat history but wipe the AI's short-term memory to save VRAM and improve speed.
-- **Persistent Hardware & Model Stats**: The Usage dashboard and Model Advisor now reliably detect your GPU and VRAM, and show *only* the app's usage.
+## What's new
 
-## 🐛 What's Fixed
-- Fixed the Startup Error screen so it works even if the backend is dead.
-- Fixed the Tesseract OCR portable downloader and licensing.
-- Fixed the empty Sources page in PDF/Word exports.
-- Fixed the `/site` map export to capture the actual Leaflet map from the UI.
-- Fixed the chat sidebar search so `Escape` closes it.
-- Fixed the UI lag when sending messages.
+- **Message editing, regeneration, and branching**: Edit a message, regenerate
+  an answer, and move between sibling branches without losing history.
+- **Per-chat drafts**: Unsent composer text stays with its chat when switching
+  conversations.
+- **Prompt Library**: Frequently used prompts are auto-saved and matched
+  semantically for quick reuse.
+- **Full-text global search**: Search across conversations from the sidebar.
+- **Law & Plant Library Manager**: Review and manage indexed laws and plants.
+- **Semantic Response Caching**: Repeated eligible questions can reuse a
+  locally cached, source-complete response.
+- **Native PDF Viewer**: Open a citation inside Nogic at the cited page with
+  “Open at page N”.
+- **Web Fallback**: When local data is missing, opt in to an honest web
+  search. Fallback answers are clearly marked with an **Unverified** badge.
+- **Automatic Database Backups**: Create manual backups and schedule daily,
+  weekly, or monthly backups with retention controls.
 
-## ⚠️ Important Notes
-- **Windows SmartScreen**: Because Nogic is an independent, open-source project, the installer is not code-signed. Click **More info** → **Run anyway**.
-- **Upgrading**: Your SQLite database, law library, and chats are preserved.
+## Notes
 
-## 📦 Installation
-1. Download the `.exe` below.
+The native PDF viewer keeps cited documents in the app and opens them at the
+relevant page. Web Fallback is deliberately opt-in and never presents web
+results as locally verified law or plant data.
+
+## Installation
+
+1. Download the Nogic v1.2.0 installer from the GitHub Releases page.
 2. Ensure [Ollama](https://ollama.com) is installed and running.
-3. Run the installer.
+3. Run the installer and select a local model in Settings → Models.
+
+Existing chats, libraries, settings, and database data are preserved during
+the upgrade. The installer is not code-signed, so Windows SmartScreen may
+require **More info → Run anyway**.

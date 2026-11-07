@@ -15,12 +15,15 @@ import { useKeyboardShortcuts } from "@/useKeyboardShortcuts.ts";
 import { ErrorSurface } from "@/components/ErrorSurface.tsx";
 import type { ErrorPayload } from "@/types/errors.ts";
 import type { TokenUsage } from "@/types/tokenUsage.ts";
+import { useSettings } from "@/contexts/SettingsContext.tsx";
 
 interface WorkspaceViewProps {
   chatTitle: string;
   onClearContext: () => Promise<void>;
   input: string;
   onInputChange: (value: string) => void;
+  attachments: FileAttachment[];
+  onAttachmentsChange: (attachments: FileAttachment[]) => void;
   isStreaming: boolean;
   onSend: (modes: ChatModes, attachments: FileAttachment[], skill: SkillTag | null) => void;
   onStop: () => void;
@@ -55,6 +58,12 @@ interface WorkspaceViewProps {
 }
 
 export function WorkspaceView(props: WorkspaceViewProps) {
+  const {
+    auto_save_prompts,
+    seen_autosave_tip,
+    settingsLoaded,
+    setSeenAutosaveTip,
+  } = useSettings();
   const [contextToast, setContextToast] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const conversationScrollRef = useRef<HTMLDivElement>(null);
@@ -96,7 +105,7 @@ export function WorkspaceView(props: WorkspaceViewProps) {
   });
 
   return (
-    <div className="flex h-full bg-bg">
+    <div className="flex h-full w-full flex-1 overflow-hidden bg-[var(--bg)]">
       {props.errorPayload ? (
         <ErrorSurface
           payload={props.errorPayload}
@@ -124,10 +133,10 @@ export function WorkspaceView(props: WorkspaceViewProps) {
         onOpenUsage={props.onOpenUsage}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col" onClick={props.onCloseChatSearch}>
+      <main className="flex w-full min-w-0 flex-1 flex-col" onClick={props.onCloseChatSearch}>
         <header className="border-b border-border">
-          <div className="mx-auto flex max-w-column items-center justify-between px-6 py-3">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-start pl-6 w-full py-3">
+            <div className="flex items-center gap-3">
               <span className="text-sec text-secondary">{props.chatTitle}</span>
               {props.activeChatId && (
                 <button
@@ -154,7 +163,31 @@ export function WorkspaceView(props: WorkspaceViewProps) {
               props.isWelcome ? "flex min-h-full flex-col justify-center" : ""
             }`}
           >
-            {props.isWelcome ? props.welcome : <div className="flex flex-col space-y-8">{props.conversation}</div>}
+            {props.isWelcome ? (
+              <>
+                {props.welcome}
+                {settingsLoaded &&
+                  auto_save_prompts &&
+                  !seen_autosave_tip && (
+                    <div className="mx-auto mt-4 flex max-w-3xl items-start justify-between gap-4 text-meta text-[var(--text-secondary)]">
+                      <p>
+                        Tip: Nogic automatically saves prompts you use frequently
+                        to your Prompt Library. You can manage this in Settings.
+                      </p>
+                      <button
+                        type="button"
+                        aria-label="Dismiss auto-save tip"
+                        onClick={() => setSeenAutosaveTip(true)}
+                        className="shrink-0 underline-offset-2 hover:text-[var(--text-primary)] hover:underline"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+              </>
+            ) : (
+              <div className="flex flex-col space-y-8">{props.conversation}</div>
+            )}
           </div>
         </div>
 
@@ -166,8 +199,10 @@ export function WorkspaceView(props: WorkspaceViewProps) {
             </p>
           )}
           <Composer
-            value={props.input}
-            onChange={props.onInputChange}
+            text={props.input}
+            onTextChange={props.onInputChange}
+            attachments={props.attachments}
+            onAttachmentsChange={props.onAttachmentsChange}
             isStreaming={props.isStreaming}
             onSend={props.onSend}
             onStop={props.onStop}

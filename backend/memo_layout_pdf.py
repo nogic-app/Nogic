@@ -16,6 +16,11 @@ from memo_content import chat_message_items, file_items
 from memo_export_assets import app_icon_path, user_initials
 from memo_pdf_components import NumberedCanvas, draw_footer, message_table
 from memo_pdf_sections import append_memo_sections, append_sources
+from memo_templates import (
+    MEMO_TEMPLATES,
+    get_template_type,
+    messages_for_template,
+)
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -36,6 +41,7 @@ INK = colors.HexColor("#1F1F1D")
 BODY = colors.HexColor("#2B2B28")
 SECONDARY = colors.HexColor("#6B6B66")
 ACCENT = colors.HexColor("#4A6B4E")
+REPORT_TITLE = "Nogic Report"
 _ARABIC = re.compile(r"[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]")
 _MARKUP = re.compile(r"(<[^>]+>)")
 
@@ -93,30 +99,46 @@ def _pdf_style(
     )
 
 
-def _pdf_styles() -> dict[str, ParagraphStyle]:
+def _pdf_styles(template_type: str) -> dict[str, ParagraphStyle]:
+    template = MEMO_TEMPLATES[template_type]
+    title_size = template.title_size
+    body_size = template.body_size
+    section_size = template.section_size
+    citation_size = template.citation_size
+    title_leading = 30 if template_type == "default" else title_size + 5
+    body_leading = 13 if template_type == "default" else body_size * 1.4
+    section_leading = 15 if template_type == "default" else section_size * 1.25
+    citation_leading = 13 if template_type == "default" else citation_size * 1.35
     return {
         "wordmark": _pdf_style("NogicWordmark", 16, 20, ACCENT),
-        "title": _pdf_style("ChatTitle", 25, 30, INK, space_after=5),
+        "title": _pdf_style("ChatTitle", title_size, title_leading, INK, space_after=5),
         "meta": _pdf_style("ChatMeta", 9, 13, SECONDARY, space_after=10),
         "section": _pdf_style(
-            "MemoSection", 12, 15, ACCENT, space_before=14, space_after=5
+            "MemoSection",
+            section_size,
+            section_leading,
+            ACCENT,
+            space_before=14,
+            space_after=5,
         ),
-        "body": _pdf_style("MessageBody", 9.5, 13, BODY),
+        "body": _pdf_style("MessageBody", body_size, body_leading, BODY),
         "message_meta": _pdf_style(
             "MessageMeta", 8, 10, SECONDARY, space_after=3
         ),
-        "lead": _pdf_style("MemoLead", 10.5, 14, INK, space_after=1),
+        "lead": _pdf_style("MemoLead", body_size + 1, body_leading + 1, INK, space_after=1),
         "detail": _pdf_style(
-            "MemoDetail", 9.5, 13, BODY, space_after=1, left_indent=12
+            "MemoDetail", body_size, body_leading, BODY, space_after=1, left_indent=12
         ),
-        "legal": _pdf_style("LegalConstraint", 9.5, 13, BODY),
+        "legal": _pdf_style(
+            "LegalConstraint", citation_size, citation_leading, BODY
+        ),
         "source_lead": _pdf_style(
-            "SourceLead", 10.5, 14, INK, space_after=2
+            "SourceLead", body_size + 1, body_leading + 1, INK, space_after=2
         ),
         "source_detail": _pdf_style(
-            "SourceDetail", 9.5, 13, BODY, space_after=12, left_indent=12
+            "SourceDetail", body_size, body_leading, BODY, space_after=12, left_indent=12
         ),
-        "empty": _pdf_style("MemoEmpty", 9.5, 13, SECONDARY, space_after=1),
+        "empty": _pdf_style("MemoEmpty", body_size, body_leading, SECONDARY, space_after=1),
         "caption": ParagraphStyle(
             "MapCaption",
             parent=getSampleStyleSheet()["Normal"],
@@ -127,8 +149,10 @@ def _pdf_styles() -> dict[str, ParagraphStyle]:
             alignment=TA_LEFT,
             spaceAfter=1,
         ),
-        "table": _pdf_style("PlantTable", 8, 10, BODY),
-        "table_header": _pdf_style("PlantTableHeader", 8, 10, ACCENT),
+        "table": _pdf_style("PlantTable", body_size - 1.5, body_size + 0.5, BODY),
+        "table_header": _pdf_style(
+            "PlantTableHeader", body_size - 1.5, body_size + 0.5, ACCENT
+        ),
     }
 
 
@@ -178,7 +202,7 @@ def _append_header(
     )
     story.extend([
         header,
-        _paragraph(escape(title or "Chat"), styles["title"]),
+        _paragraph(REPORT_TITLE, styles["title"]),
         _paragraph(
             escape(
                 f"Exported {current_date} · {message_count} messages · "
@@ -239,10 +263,13 @@ def render_pdf(
     model_name: str,
     user_name: str = "",
     map_image_path: str | None = None,
+    template_type: str = "default",
 ) -> None:
     """Render the chat and its memo references to a paginated PDF."""
+    template_type = get_template_type(template_type)
+    render_messages = messages_for_template(messages, template_type)
     current_date = date.today().strftime("%B %d, %Y").replace(" 0", " ")
-    styles = _pdf_styles()
+    styles = _pdf_styles(template_type)
     document = SimpleDocTemplate(
         path,
         pagesize=A4,
@@ -250,15 +277,20 @@ def render_pdf(
         rightMargin=22 * mm,
         topMargin=17 * mm,
         bottomMargin=20 * mm,
-        title=f"Nogic Chat Export - {title}",
+        title=REPORT_TITLE,
         author="Nogic",
     )
     story: list[Any] = []
     _append_header(
-        story, title, model_name, len(chat_message_items(messages)), current_date, styles
+        story,
+        title,
+        model_name,
+        len(chat_message_items(render_messages)),
+        current_date,
+        styles,
     )
-    _append_conversation(story, messages, styles, user_name, app_icon_path())
-    _append_files(story, messages, styles)
+    _append_conversation(story, render_messages, styles, user_name, app_icon_path())
+    _append_files(story, render_messages, styles)
     append_memo_sections(
         story,
         messages,
@@ -267,8 +299,9 @@ def render_pdf(
         clean_markdown,
         fix_arabic,
         map_image_path,
+        template_type,
     )
-    append_sources(story, messages, styles, _paragraph)
+    append_sources(story, render_messages, styles, _paragraph)
     on_page = draw_footer(current_date)
     document.build(
         story,

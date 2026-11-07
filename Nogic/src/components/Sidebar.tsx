@@ -7,8 +7,19 @@ import { SidebarUsageWidget } from "./SidebarUsageWidget.tsx";
 import { CreateProjectModal } from "./CreateProjectModal.tsx";
 import { handleChatDeletionResponse } from "./sidebarChatDeletion.ts";
 import { exportChat, type ChatExportFormat } from "./sidebarChatExport.ts";
-import { isChatItem, isProjectItem, isRecord, type ChatItem, type ProjectItem } from "../sidebarData.ts";
-import { isTauriCallbackIdError } from "@/sidecarRequest.ts";
+import {
+  isChatItem,
+  isMessageSearchResult,
+  isProjectItem,
+  isRecord,
+  type ChatItem,
+  type MessageSearchResult,
+  type ProjectItem,
+} from "../sidebarData.ts";
+import {
+  isTauriCallbackIdError,
+  requestSidecar,
+} from "@/sidecarRequest.ts";
 
 export type { ChatItem } from "../sidebarData.ts";
 
@@ -56,7 +67,13 @@ export function Sidebar({
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [chats, setChats] = useState<ChatItem[]>([]);
+  const [messageSearchResults, setMessageSearchResults] = useState<
+    MessageSearchResult[] | null
+  >(null);
+  const [messageSearchFailed, setMessageSearchFailed] = useState(false);
   const [projectToast, setProjectToast] = useState<string | null>(null);
+  const messageSearchVersion = useRef(0);
+  const pendingSearchChat = useRef<{ chatId: string; requestId: string } | null>(null);
   const pendingDeleteChatId = useRef<string | null>(null);
   const pendingDeleteProjectId = useRef<string | null>(null);
   const projectToastTimeout = useRef<number | null>(null);
@@ -68,6 +85,45 @@ export function Sidebar({
       }
     };
   }, []);
+
+  useEffect(() => {
+    const version = ++messageSearchVersion.current;
+    const query = chatSearch.trim();
+    if (!isChatSearchOpen || query.length < 2) {
+      setMessageSearchResults(null);
+      setMessageSearchFailed(false);
+      return () => {
+        messageSearchVersion.current += 1;
+      };
+    }
+
+    setMessageSearchResults(null);
+    setMessageSearchFailed(false);
+    const timeout = window.setTimeout(() => {
+      void requestSidecar<MessageSearchResult[]>(
+        "search_messages",
+        { query },
+        (value): value is MessageSearchResult[] =>
+          Array.isArray(value) && value.every(isMessageSearchResult),
+      )
+        .then((results) => {
+          if (messageSearchVersion.current === version) {
+            setMessageSearchResults(results);
+          }
+        })
+        .catch((error: unknown) => {
+          console.error("Failed to search message content through the Python sidecar.", error);
+          if (messageSearchVersion.current === version) {
+            setMessageSearchFailed(true);
+          }
+        });
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeout);
+      messageSearchVersion.current += 1;
+    };
+  }, [chatSearch, isChatSearchOpen]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -220,6 +276,15 @@ export function Sidebar({
           }
           if (typeof payload.id !== "string") return;
 
+          if (
+            payload.type === "error" &&
+            pendingSearchChat.current?.requestId === payload.id
+          ) {
+            pendingSearchChat.current = null;
+            console.error("Could not load chat details for a message search result.", payload.error);
+            return;
+          }
+
           const isSidebarRequest =
             payload.id === "init_sidebar" ||
             payload.id.startsWith("refresh_chats:") ||
@@ -291,6 +356,16 @@ export function Sidebar({
               loadedChats.push(chat);
             }
             setChats(loadedChats);
+            if (pendingSearchChat.current?.requestId === payload.id) {
+              const { chatId } = pendingSearchChat.current;
+              pendingSearchChat.current = null;
+              const selectedChat = loadedChats.find((chat) => chat.id === chatId);
+              if (selectedChat) {
+                onSelectChat(selectedChat);
+              } else {
+                console.error("The chat for a message search result no longer exists.", chatId);
+              }
+            }
             return;
           }
 
@@ -522,6 +597,25 @@ export function Sidebar({
         onToggleChatSearch={onToggleChatSearch}
         onCloseChatSearch={onCloseChatSearch}
         onChatSearchChange={onChatSearchChange}
+        messageSearchResults={messageSearchResults}
+        messageSearchFailed={messageSearchFailed}
+        onSelectMessageSearchResult={(result) => {
+          const chat = chats.find((item) => item.id === result.chat_id);
+          if (chat) {
+            onSelectChat(chat);
+            return;
+          }
+
+          const requestId = `refresh_chats:${crypto.randomUUID()}`;
+          pendingSearchChat.current = { chatId: result.chat_id, requestId };
+          void invoke("send_to_sidecar", {
+            message: JSON.stringify({ action: "get_chats", id: requestId }),
+          }).catch((error: unknown) => {
+            if (pendingSearchChat.current?.requestId !== requestId) return;
+            pendingSearchChat.current = null;
+            console.error("Failed to load chat details for a message search result.", error);
+          });
+        }}
         onAddChatToProject={(project) => onCreateChat(project.id)}
         hidden={!isOpen}
       />

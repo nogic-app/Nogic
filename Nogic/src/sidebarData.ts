@@ -13,8 +13,23 @@ export interface ChatItem {
   is_pinned: boolean;
 }
 
+export interface MessageSearchResult {
+  chat_id: string;
+  chat_title: string;
+  snippet: string;
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+export function isMessageSearchResult(value: unknown): value is MessageSearchResult {
+  return (
+    isRecord(value) &&
+    typeof value.chat_id === "string" &&
+    typeof value.chat_title === "string" &&
+    typeof value.snippet === "string"
+  );
 }
 
 export function isProjectItem(value: unknown): value is ProjectItem {

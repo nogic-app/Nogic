@@ -1,16 +1,20 @@
 # backend/db.py
-import sqlite3
-import os
-import json
 import hashlib
+import json
+import os
 import re
+import shutil
+import sqlite3
 import sys
+import tempfile
 import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
-from runtime_paths import IS_FROZEN
+from runtime_paths import APP_DATA_ROOT, DATA_DIR, IS_FROZEN
 from source_dedup import deduplicate_sources, preferred_law_name
 
 # For development, we'll save the database in the backend folder.
@@ -21,6 +25,7 @@ if IS_FROZEN:
 else:
     DB_PATH = os.path.join(os.path.dirname(__file__), "nogic.db")
 
+BACKUPS_DIR = APP_DATA_ROOT / "backups"
 COUNTRY_HASH_MIGRATION_KEY = "law_country_hash_migration_v1"
 
 
@@ -46,7 +51,82 @@ def get_connection():
     finally:
         conn.close()
 
+
+def create_database_backup(target_path: str) -> None:
+    if not target_path.strip():
+        raise ValueError("A backup target path is required.")
+
+    database_path = Path(DB_PATH)
+    if not database_path.is_file():
+        raise FileNotFoundError(f"The Nogic database does not exist: {database_path}")
+
+    target = Path(target_path).expanduser()
+    if target.resolve() == database_path.resolve():
+        raise ValueError("The backup target cannot be the live database.")
+    output_path = (
+        target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        if target.exists()
+        else target
+    )
+
+    try:
+        connection = sqlite3.connect(str(database_path))
+        try:
+            connection.execute("VACUUM INTO ?", (str(output_path),))
+        finally:
+            connection.close()
+        if output_path != target:
+            os.replace(output_path, target)
+    except BaseException:
+        output_path.unlink(missing_ok=True)
+        raise
+
+
+def restore_database_from(source_path: str) -> None:
+    if not source_path.strip():
+        raise ValueError("A database backup path is required.")
+
+    source = Path(source_path).expanduser()
+    if not source.is_file():
+        raise FileNotFoundError(f"The database backup does not exist: {source}")
+
+    source_connection = sqlite3.connect(str(source))
+    try:
+        result = source_connection.execute("PRAGMA quick_check").fetchone()
+        if result is None or result[0] != "ok":
+            raise ValueError("The selected file is not a valid SQLite database.")
+    finally:
+        source_connection.close()
+
+    pre_restore_backup = (
+        Path(tempfile.gettempdir()) / f"nogic_pre_restore_{uuid4().hex}.db"
+    )
+    create_database_backup(str(pre_restore_backup))
+
+    database_path = Path(DB_PATH)
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    staged_database = database_path.with_name(
+        f".{database_path.name}.{uuid4().hex}.restore"
+    )
+    try:
+        shutil.copy2(source, staged_database)
+        staged_connection = sqlite3.connect(str(staged_database))
+        try:
+            result = staged_connection.execute("PRAGMA quick_check").fetchone()
+            if result is None or result[0] != "ok":
+                raise ValueError("The selected file is not a valid SQLite database.")
+        finally:
+            staged_connection.close()
+
+        os.replace(staged_database, database_path)
+        for suffix in ("-wal", "-shm"):
+            Path(f"{database_path}{suffix}").unlink(missing_ok=True)
+    finally:
+        staged_database.unlink(missing_ok=True)
+
+
 def init_db():
+    BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     with get_connection() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS projects (
@@ -80,16 +160,63 @@ def init_db():
                 file_path TEXT,
                 file_size INTEGER,
                 file_type TEXT,
+                template_type TEXT,
                 skill TEXT,
+                unverified_web INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
+                parent_id TEXT,
                 FOREIGN KEY (chat_id) REFERENCES chats(id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);
 
+            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                message_id UNINDEXED,
+                chat_id UNINDEXED,
+                content
+            );
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_insert
+            AFTER INSERT ON messages BEGIN
+                INSERT INTO messages_fts (message_id, chat_id, content)
+                VALUES (NEW.id, NEW.chat_id, NEW.content);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_update
+            AFTER UPDATE ON messages BEGIN
+                DELETE FROM messages_fts WHERE message_id = OLD.id;
+                INSERT INTO messages_fts (message_id, chat_id, content)
+                VALUES (NEW.id, NEW.chat_id, NEW.content);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS messages_fts_delete
+            AFTER DELETE ON messages BEGIN
+                DELETE FROM messages_fts WHERE message_id = OLD.id;
+            END;
+
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS prompt_library (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                embedding TEXT,
+                usage_count INTEGER NOT NULL DEFAULT 0,
+                auto_saved INTEGER NOT NULL DEFAULT 0
+            );
+
+            DROP TABLE IF EXISTS semantic_cache;
+
+            CREATE TABLE IF NOT EXISTS semantic_cache (
+                id TEXT PRIMARY KEY,
+                question_text TEXT NOT NULL,
+                embedding TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS law_article_hashes (
@@ -110,10 +237,46 @@ def init_db():
                 tokenize='unicode61 remove_diacritics 2'
             );
         """)
+        fts_count = conn.execute(
+            "SELECT count(*) FROM messages_fts"
+        ).fetchone()[0]
+        if fts_count == 0:
+            conn.execute(
+                "INSERT INTO messages_fts (message_id, chat_id, content) "
+                "SELECT id, chat_id, content FROM messages"
+            )
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('modelKeepAlive', '5m') "
             "ON CONFLICT(key) DO NOTHING"
         )
+        conn.executemany(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO NOTHING",
+            (
+                ("auto_save_prompts", "true"),
+                ("semantic_auto_save", "false"),
+                ("seen_autosave_tip", "false"),
+                ("auto_backup_frequency", "weekly"),
+                ("last_auto_backup_date", ""),
+                ("web_fallback_enabled", "false"),
+            ),
+        )
+
+        prompt_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(prompt_library)")
+        }
+        if "embedding" not in prompt_columns:
+            conn.execute("ALTER TABLE prompt_library ADD COLUMN embedding TEXT")
+        if "usage_count" not in prompt_columns:
+            conn.execute(
+                "ALTER TABLE prompt_library "
+                "ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "auto_saved" not in prompt_columns:
+            conn.execute(
+                "ALTER TABLE prompt_library "
+                "ADD COLUMN auto_saved INTEGER NOT NULL DEFAULT 0"
+            )
 
         # FTS5 virtual tables cannot be altered in place, so rebuild when a
         # schema is missing either metadata column.
@@ -191,6 +354,25 @@ def init_db():
         message_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(messages)")
         }
+        added_parent_id = "parent_id" not in message_columns
+        if added_parent_id:
+            conn.execute("ALTER TABLE messages ADD COLUMN parent_id TEXT")
+            legacy_chats = conn.execute(
+                "SELECT DISTINCT chat_id FROM messages"
+            ).fetchall()
+            for legacy_chat in legacy_chats:
+                legacy_messages = conn.execute(
+                    "SELECT id FROM messages WHERE chat_id = ? "
+                    "ORDER BY created_at ASC, rowid ASC",
+                    (legacy_chat["chat_id"],),
+                ).fetchall()
+                previous_id = None
+                for legacy_message in legacy_messages:
+                    conn.execute(
+                        "UPDATE messages SET parent_id = ? WHERE id = ?",
+                        (previous_id, legacy_message["id"]),
+                    )
+                    previous_id = legacy_message["id"]
         if "sources" not in message_columns:
             conn.execute("ALTER TABLE messages ADD COLUMN sources TEXT")
         if "plant_data" not in message_columns:
@@ -209,8 +391,15 @@ def init_db():
             conn.execute("ALTER TABLE messages ADD COLUMN file_size INTEGER")
         if "file_type" not in message_columns:
             conn.execute("ALTER TABLE messages ADD COLUMN file_type TEXT")
+        if "template_type" not in message_columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN template_type TEXT")
         if "skill" not in message_columns:
             conn.execute("ALTER TABLE messages ADD COLUMN skill TEXT")
+        if "unverified_web" not in message_columns:
+            conn.execute(
+                "ALTER TABLE messages "
+                "ADD COLUMN unverified_web INTEGER NOT NULL DEFAULT 0"
+            )
         project_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(projects)")
         }
@@ -273,6 +462,10 @@ def save_message(
     file_size=None,
     file_type=None,
     skill=None,
+    message_id=None,
+    parent_id=None,
+    template_type=None,
+    unverified_web=False,
 ):
     # Keep empty reasoning as NULL so old and non-reasoning messages stay light.
     thinking_text = thinking if isinstance(thinking, str) and thinking.strip() else None
@@ -283,15 +476,23 @@ def save_message(
         else None
     )
     stored_file_type = file_type if isinstance(file_type, str) and file_type.strip() else None
+    stored_template_type = (
+        template_type
+        if isinstance(template_type, str) and template_type.strip()
+        else None
+    )
     stored_skill = skill if isinstance(skill, str) and skill.strip() else None
+    stored_unverified_web = 1 if unverified_web is True else 0
+    stored_message_id = message_id or uuid4().hex
     with get_connection() as conn:
         conn.execute(
             "INSERT INTO messages "
             "(id, chat_id, role, content, sources, plant_data, site_data, web_sources, "
-            "thinking, attachments, file_path, file_size, file_type, skill, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "thinking, attachments, file_path, file_size, file_type, skill, "
+            "template_type, unverified_web, created_at, parent_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                uuid4().hex,
+                stored_message_id,
                 chat_id,
                 role,
                 content,
@@ -305,9 +506,31 @@ def save_message(
                 stored_file_size,
                 stored_file_type,
                 stored_skill,
+                stored_template_type,
+                stored_unverified_web,
                 datetime.now().isoformat(),
+                parent_id,
             ),
         )
+    return stored_message_id
+
+
+def insert_message(conn, chat_id, role, content, message_id=None, parent_id=None):
+    """Insert a plain branch message using the caller's transaction."""
+    stored_message_id = message_id or uuid4().hex
+    conn.execute(
+        "INSERT INTO messages (id, chat_id, role, content, created_at, parent_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            stored_message_id,
+            chat_id,
+            role,
+            content,
+            datetime.now().isoformat(),
+            parent_id,
+        ),
+    )
+    return stored_message_id
 
 
 def get_settings():
@@ -326,6 +549,41 @@ def save_setting(key, value):
         )
 
 
+def get_all_cache_embeddings() -> list[dict[str, str]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, question_text, embedding, payload_json "
+            "FROM semantic_cache ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def insert_cache_entry(
+    id: str,
+    question: str,
+    embedding: list[float],
+    payload_json: str,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO semantic_cache "
+            "(id, question_text, embedding, payload_json, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                id,
+                question,
+                json.dumps(embedding),
+                payload_json,
+                datetime.now().isoformat(),
+            ),
+        )
+
+
+def clear_semantic_cache() -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM semantic_cache")
+
+
 def count_law_articles():
     with get_connection() as conn:
         row = conn.execute(
@@ -333,6 +591,76 @@ def count_law_articles():
             "FROM law_articles"
         ).fetchone()
     return {"article_count": row["article_count"], "law_count": row["law_count"]}
+
+
+def get_laws_metadata() -> list[dict[str, str | int]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT law_name AS name, country, count(*) AS article_count "
+            "FROM law_articles "
+            "GROUP BY law_name, country "
+            "ORDER BY law_name COLLATE NOCASE, country"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_law(law_name: str, country: str | None) -> None:
+    from law_ingest import law_filename_from_name, normalize_country_code
+
+    if not isinstance(law_name, str) or not law_name.strip():
+        raise ValueError("The law name is required.")
+    country_code = normalize_country_code(country)
+    filename = law_filename_from_name(law_name.strip(), country_code)
+    law_directory = DATA_DIR / "laws"
+    stem = Path(filename).stem
+    filenames = {
+        f"{stem}{suffix}{language}.pdf"
+        for suffix in ("", "-", "_")
+        for language in ("fr", "ar")
+    }
+    filenames.add(filename)
+    if country_code == "MA":
+        legacy_stem = stem.replace("Law_MA_", "Law_", 1)
+        filenames.update(
+            f"{legacy_stem}{suffix}{language}.pdf"
+            for suffix in ("", "-", "_")
+            for language in ("fr", "ar")
+        )
+        filenames.add(f"{legacy_stem}.pdf")
+
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM law_articles WHERE law_name = ? AND country = ?",
+            (law_name.strip(), country_code),
+        )
+        conn.execute(
+            "DELETE FROM law_article_hashes WHERE law_name = ? AND country = ?",
+            (law_name.strip(), country_code),
+        )
+        for candidate in filenames:
+            (law_directory / candidate).unlink(missing_ok=True)
+
+
+def get_plants_metadata() -> list[dict[str, Any]]:
+    from plant_search import load_plants
+
+    return load_plants()
+
+
+def delete_plant(plant_id: str) -> None:
+    if not isinstance(plant_id, str) or not plant_id.strip():
+        raise ValueError("The plant ID is required.")
+    plant_id = plant_id.strip()
+
+    from import_plants import save_plants
+    from plant_search import load_plants
+
+    plants = load_plants()
+    remaining = [plant for plant in plants if plant["id"] != plant_id]
+    if len(remaining) == len(plants):
+        raise ValueError(f"No plant found with ID {plant_id}.")
+    save_plants(remaining)
+
 
 def create_chat(project_id=None, title="New Chat"):
     chat = {
@@ -451,8 +779,9 @@ def get_messages(chat_id):
         rows = conn.execute(
             "SELECT id, chat_id, role, content, sources, plant_data, site_data, "
             "web_sources, thinking, "
-            "attachments, file_path, file_size, file_type, skill, created_at "
-            "FROM messages WHERE chat_id = ? ORDER BY created_at ASC",
+            "attachments, file_path, file_size, file_type, skill, template_type, created_at, "
+            "parent_id, unverified_web "
+            "FROM messages WHERE chat_id = ? ORDER BY created_at ASC, rowid ASC",
             (chat_id,),
         ).fetchall()
     messages = []
@@ -475,8 +804,49 @@ def get_messages(chat_id):
         )
         # Always a string: the frontend validator rejects null.
         message["file_path"] = message["file_path"] or ""
+        message["unverified_web"] = bool(message["unverified_web"])
         messages.append(message)
     return messages
+
+
+def build_active_branch(chat_id, active_leaf_id=None):
+    """Return one message path from the chat root through the selected leaf."""
+    messages = get_messages(chat_id)
+    messages_by_id = {message["id"]: message for message in messages}
+    if active_leaf_id is not None and active_leaf_id not in messages_by_id:
+        print(
+            f"WARNING: active_leaf_id {active_leaf_id} not found in DB. "
+            "Falling back to latest message.",
+            file=sys.stderr,
+        )
+        active_leaf_id = None
+
+    if active_leaf_id is None:
+        with get_connection() as conn:
+            latest_message = conn.execute(
+                "SELECT id FROM messages WHERE chat_id = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (chat_id,),
+            ).fetchone()
+        if latest_message is None:
+            return []
+        active_leaf_id = latest_message["id"]
+
+    branch = []
+    visited = set()
+    current_id = active_leaf_id
+    while current_id is not None:
+        if current_id in visited:
+            raise ValueError("The message history contains a parent cycle.")
+        visited.add(current_id)
+        current_message = messages_by_id.get(current_id)
+        if current_message is None:
+            raise ValueError("The message history references a missing parent.")
+        branch.append(current_message)
+        current_id = current_message["parent_id"]
+
+    branch.reverse()
+    return branch
 
 STEM_SUFFIXES = ("ements", "ement", "ations", "ation", "es", "s", "e", "x")
 # Terms present in more than this share of the corpus carry little
@@ -562,7 +932,8 @@ def search_law(query, limit=8):
             print(f"DROPPED TERMS: {' '.join(dropped)}", file=sys.stderr, flush=True)
         match_query = " OR ".join(_match_term(word) for word in selected)
         rows = conn.execute(
-            "SELECT law_name, article_num, content, page_num, sub_law, country "
+            "SELECT law_name, article_num, content, page_num, sub_law, country, "
+            "rank AS bm25_score "
             "FROM law_articles WHERE law_articles MATCH ? "
             "AND length(content) >= ? ORDER BY rank LIMIT ?",
             (match_query, MIN_ARTICLE_LENGTH, limit),

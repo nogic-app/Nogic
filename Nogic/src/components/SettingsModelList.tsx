@@ -7,8 +7,18 @@ import { recommendModels } from "@/modelRecommendations.ts";
 import { MODEL_CATALOG, type ModelOption } from "@/modelCatalog.ts";
 import type { HardwareInfo } from "@/types/hardware";
 
+type CapabilityFilter = "all" | "vision" | "thinking" | "tools";
+
+const CAPABILITY_FILTERS: ReadonlyArray<CapabilityFilter> = [
+  "all",
+  "tools",
+  "thinking",
+  "vision",
+];
+
 interface SettingsModelListProps {
   activeModel: string;
+  recommendedModelName: string | null;
   error: string | null;
   hardwareInfo: HardwareInfo | null;
   installedModels: string[];
@@ -27,6 +37,7 @@ interface SettingsModelListProps {
 
 export function SettingsModelList({
   activeModel,
+  recommendedModelName,
   error,
   hardwareInfo,
   installedModels,
@@ -48,17 +59,52 @@ export function SettingsModelList({
     hardwareInfo,
     installedModels,
   );
+  const [capabilityFilter, setCapabilityFilter] =
+    useState<CapabilityFilter>("all");
   const [showAll, setShowAll] = useState(false);
+  const availableAlternatives = recommendations.filter(({ model }) => {
+    if (model.name === recommendedModelName) return false;
+    return (
+      capabilityFilter === "all" ||
+      model.capabilities.includes(capabilityFilter)
+    );
+  });
   const visibleRecommendations = showAll
-    ? recommendations
-    : recommendations.slice(0, 5);
+    ? availableAlternatives
+    : availableAlternatives.slice(0, 5);
   return (
     <section>
       <div className="flex items-center justify-between gap-3">
+        <h4 className="text-title font-semibold text-[var(--text-primary)]">
+          {t("settings.availableModels")}
+        </h4>
         <div className="flex items-center gap-2">
-          <h4 className="text-title font-medium text-[var(--text-primary)]">
-            {t("settings.availableModels")}
-          </h4>
+          <div
+            role="group"
+            aria-label={t("settings.filterByCapability")}
+            className="flex flex-wrap items-center justify-end gap-1"
+          >
+            {CAPABILITY_FILTERS.map((filter) => (
+              <button
+                key={filter}
+                type="button"
+                aria-pressed={capabilityFilter === filter}
+                onClick={() => {
+                  setCapabilityFilter(filter);
+                  setShowAll(false);
+                }}
+                className={`rounded-md px-2.5 py-1 text-meta transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus)] ${
+                  capabilityFilter === filter
+                    ? "bg-[var(--accent)] text-[var(--bg-elevated)]"
+                    : "bg-[var(--bg-muted)] text-[var(--text-secondary)] hover:text-[var(--accent)]"
+                }`}
+              >
+                {filter === "all"
+                  ? t("settings.allCapabilities")
+                  : t(`settings.${filter}`)}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             aria-label={t("settings.refreshModels")}
@@ -70,16 +116,16 @@ export function SettingsModelList({
             <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
           </button>
         </div>
-        <span className="text-meta text-[var(--text-secondary)]">
-          {t("settings.modelCount", { count: recommendations.length })}
-        </span>
       </div>
+      <p className="mt-1 text-meta text-[var(--text-secondary)]">
+        {t("settings.modelCount", { count: availableAlternatives.length })}
+      </p>
       {error ? (
         <p role="alert" className="mt-2 text-meta text-[var(--text-secondary)]">
           {error}
         </p>
       ) : null}
-      <ul className="mt-3 space-y-2">
+      <ul className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
         {visibleRecommendations.map(({ model, fit, featured }) => {
           const isInstalled = installedModels.includes(model.name);
           const isPulling = pullingModel === model.name;
@@ -98,33 +144,33 @@ export function SettingsModelList({
           return (
             <li
               key={model.name}
-              className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5"
+              className="flex h-full flex-col rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5"
             >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sec font-medium text-[var(--text-primary)]">
-                      {model.name}
-                    </span>
-                    {badge ? (
-                      <Pill variant={badge.variant}>{badge.label}</Pill>
-                    ) : null}
-                  </div>
-                  <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
-                    {model.sizeLabel}
-                    {activeModel === model.name ? ` · ${t("settings.active")}` : ""}
-                  </p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {model.capabilities.map((capability) => (
-                      <span
-                        key={capability}
-                        className="rounded-full bg-[var(--accent-subtle)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--accent)]"
-                      >
-                        {capability}
-                      </span>
-                    ))}
-                  </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-sec font-medium text-[var(--text-primary)]">
+                    {model.name}
+                  </span>
+                  {badge ? (
+                    <Pill variant={badge.variant}>{badge.label}</Pill>
+                  ) : null}
                 </div>
+                <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
+                  {model.sizeLabel}
+                  {activeModel === model.name ? ` · ${t("settings.active")}` : ""}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {model.capabilities.map((capability) => (
+                    <span
+                      key={capability}
+                      className="rounded-full bg-[var(--accent-subtle)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--accent)]"
+                    >
+                      {capability}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-auto flex items-center justify-end gap-1 pt-3">
                 {isPulling ? (
                   <Button
                     variant="outline"
@@ -134,7 +180,7 @@ export function SettingsModelList({
                     {isCancelling ? t("settings.cancelling") : t("settings.cancel")}
                   </Button>
                 ) : isInstalled ? (
-                  <div className="flex items-center gap-1">
+                  <>
                     <Button
                       variant={activeModel === model.name ? "outline" : "accent"}
                       onClick={() => onUse(model.name)}
@@ -155,7 +201,7 @@ export function SettingsModelList({
                     >
                       <Trash2 size={15} aria-hidden="true" />
                     </button>
-                  </div>
+                  </>
                 ) : (
                   <Button
                     variant="outline"
@@ -192,7 +238,7 @@ export function SettingsModelList({
           );
         })}
       </ul>
-      {recommendations.length > 5 ? (
+      {availableAlternatives.length > 5 ? (
         <button
           type="button"
           onClick={() => setShowAll((value) => !value)}
@@ -200,7 +246,7 @@ export function SettingsModelList({
         >
           {showAll
             ? t("settings.showLessModels")
-            : t("settings.showAllModels", { count: recommendations.length })}
+            : t("settings.showAllModels", { count: availableAlternatives.length })}
         </button>
       ) : null}
     </section>

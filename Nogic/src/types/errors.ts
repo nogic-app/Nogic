@@ -13,6 +13,10 @@ export interface ErrorPayload {
   action?: ErrorAction | null;
 }
 
+function isErrorBucket(value: unknown): value is ErrorBucket {
+  return ["network", "model", "gpu", "db", "file"].includes(String(value));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -39,6 +43,15 @@ export function normalizeErrorPayload(value: unknown): ErrorPayload {
   if (isRecord(value)) {
     const record = value;
     if (isErrorPayload(record.payload)) return record.payload;
+    if (
+      isErrorBucket(record.bucket) &&
+      typeof record.user_message === "string"
+    ) {
+      return {
+        bucket: record.bucket,
+        message: record.user_message,
+      };
+    }
     value = record.message ?? record.error;
   }
   const detail = value instanceof Error ? value.message : String(value ?? "");

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isRecord, requestSidecar } from "@/sidecarRequest.ts";
+import { EmbeddingRequirement } from "./EmbeddingRequirement.tsx";
 
 const TESSERACT_CHECK_TIMEOUT_MS = 15_000;
 const TESSERACT_DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -185,6 +186,7 @@ export function TesseractRequirement() {
           </button>
         )}
       </div>
+      <EmbeddingRequirement />
       {error && (
         <p role="alert" className="mt-2 text-meta text-[var(--danger)]">
           {error}

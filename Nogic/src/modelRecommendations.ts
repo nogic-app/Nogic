@@ -10,6 +10,22 @@ export interface ModelRecommendation {
   featured: boolean;
 }
 
+/** Select the first catalog model that fits within 80% of detected VRAM. */
+export function recommendModelForHardware(
+  models: ReadonlyArray<ModelOption>,
+  hardware: HardwareInfo | null,
+): ModelOption | null {
+  if (!hardware) return null;
+  const hasDetectedHardware =
+    hardware.cpu_name.trim().length > 0 ||
+    Boolean(hardware.gpu_name) ||
+    (hardware.total_ram_gb ?? 0) > 0;
+  if (!hasDetectedHardware) return null;
+
+  const vram = hardware.vram_gb ?? 0;
+  return models.find((model) => model.requiredVramGb <= vram * 0.8) ?? null;
+}
+
 /**
  * Decide whether a model fits the detected GPU.
  *

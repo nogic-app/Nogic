@@ -72,6 +72,8 @@ export function SettingsGeneral() {
     setEnableShortcuts,
     persona,
     setPersona,
+    auto_save_prompts,
+    setAutoSavePrompts,
   } = useSettings();
   const { t } = useTranslation();
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
@@ -161,12 +163,29 @@ export function SettingsGeneral() {
           rows={3}
           value={persona}
           onChange={(event) => setPersona(event.target.value)}
-          placeholder="e.g. You are a strict academic tutor. Always answer in French."
+          placeholder="e.g., You are a strict academic tutor. Always answer in French."
           className="mt-2 block w-full resize-y rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1.5 text-sec text-[var(--text-primary)] outline-none placeholder:text-[var(--text-tertiary)] focus:border-[var(--border-strong)] focus:ring-2 focus:ring-[var(--focus)]"
         />
+        <button
+          type="button"
+          onClick={() => setPersona("")}
+          className="mt-1 block text-meta text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+        >
+          {t("settings.resetToDefault", "Reset to default")}
+        </button>
         <p className="mt-0.5 text-meta text-[var(--text-secondary)]">
           Customize how the AI speaks to you. Leave blank for the default Nogic landscape architect persona.
         </p>
+      </Section>
+
+      <Section title="AI Settings">
+        <ToggleGroup>
+          <SettingsToggle
+            label="Auto-save frequent prompts to Library"
+            checked={auto_save_prompts}
+            onChange={setAutoSavePrompts}
+          />
+        </ToggleGroup>
       </Section>
 
       <Section title={t("settings.language")} description={t("settings.chooseLanguage", "Choose the language for the interface.")}>
